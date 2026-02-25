@@ -427,6 +427,31 @@ class AnalyzerService:
         valid.sort(key=_score)
         return valid
 
+    def _sanitize_supplementary_terms(self, query_terms: list[str]) -> list[str]:
+        """
+        清洗 NEED_MORE_EVIDENCE 检索词：LLM 常输出自然语言描述（如「xxx方法实现」），
+        需提取更可能出现在代码中的短标识符（类名、方法名），提高 Zoekt 命中率。
+        """
+        out: list[str] = []
+        seen: set[str] = set()
+        for t in query_terms:
+            if not isinstance(t, str) or not t.strip():
+                continue
+            t = t.strip()
+            # 提取类名、方法名等代码标识符（含 . 的如 BeisenTenantBizIntegrationService.pointCharging）
+            for m in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?", t):
+                s = m.group(0)
+                if len(s) >= 3 and s not in seen:
+                    seen.add(s)
+                    out.append(s)
+            # 提取纯英文/数字标识符（至少 4 字符，避免过于泛化）
+            for m in re.finditer(r"\b[A-Za-z][A-Za-z0-9_]{3,}\b", t):
+                s = m.group(0)
+                if s not in seen:
+                    seen.add(s)
+                    out.append(s)
+        return out[:8]  # 限制数量，避免查询过长
+
     async def _append_supplementary_evidence(
         self,
         *,
@@ -441,19 +466,29 @@ class AnalyzerService:
         """
         if not query_terms or not self._zoekt:
             return 0
-        terms = [t.strip() for t in query_terms if isinstance(t, str) and t.strip()][:6]
+        raw_terms = [t.strip() for t in query_terms if isinstance(t, str) and t.strip()][:6]
+        if not raw_terms:
+            return 0
+        terms = self._sanitize_supplementary_terms(raw_terms)
         if not terms:
-            return 0
+            terms = raw_terms[:4]  # 清洗后为空则回退到原始词（截断）
         content_part = "(" + " or ".join(terms) + ")" if len(terms) > 1 else terms[0]
-        query = f"repo:{repo.service_name} {content_part}"
-        logger.info(f"[Analyzer] 补充检索：{query}")
-        try:
-            raw_hits = await self._zoekt.search(query=query, max_matches=20)
-            hits = self._filter_zoekt_hits_for_repo(raw_hits, repo.local_dir, event.service_name)
-            hits = self._filter_and_sort_zoekt_hits(hits)
-        except Exception as e:
-            logger.warning(f"[Analyzer] 补充 Zoekt 检索失败：{e}", exc_info=True)
-            return 0
+        # 尝试多种 repo 名：service_name 与 local_dir 的 basename（Zoekt 索引可能用其一）
+        repo_names = list(dict.fromkeys([repo.service_name, Path(repo.local_dir).name]))
+        hits: list[ZoektHit] = []
+        for rn in repo_names:
+            if not rn:
+                continue
+            query = f"repo:{rn} {content_part}"
+            logger.info(f"[Analyzer] 补充检索：{query} (原始词={raw_terms[:3]}...)")
+            try:
+                raw_hits = await self._zoekt.search(query=query, max_matches=20)
+                hits = self._filter_zoekt_hits_for_repo(raw_hits, repo.local_dir, event.service_name)
+                hits = self._filter_and_sort_zoekt_hits(hits)
+                if hits:
+                    break
+            except Exception as e:
+                logger.warning(f"[Analyzer] 补充 Zoekt 检索失败：{e}", exc_info=True)
         if not hits:
             return 0
         supp_pack = self._evidence_builder.build_from_zoekt_hits(
@@ -492,8 +527,10 @@ class AnalyzerService:
                 )
             except Exception as e:
                 logger.debug(f"[Analyzer] 补充向量检索失败：{e}")
-        if terms:
-            evidence.notes.append(f"已根据 NEED_MORE_EVIDENCE 补充检索 {len(terms)} 个关键词，追加 {added} 条 Zoekt 证据。")
+        if raw_terms:
+            evidence.notes.append(
+                f"已根据 NEED_MORE_EVIDENCE 补充检索 {len(raw_terms)} 个关键词（清洗后 {len(terms)} 个），追加 {added} 条 Zoekt 证据。"
+            )
         return added
 
     def _extract_need_more_evidence(self, result: dict | None) -> list[str]:

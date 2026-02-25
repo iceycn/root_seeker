@@ -87,6 +87,8 @@ Full list of `config.yaml` options.
 | Key | Description |
 |-----|-------------|
 | webhook_url | Webhook URL |
+| security_mode | sign \| keyword \| ip |
+| secret | Required when security_mode=sign |
 
 ## Optional Features
 

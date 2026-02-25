@@ -35,9 +35,13 @@ zoekt:
 
 wecom:
   webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=REPLACE_ME"
+  security_mode: ip   # sign（加签）| keyword（关键词）| ip（IP白名单）
+  # secret: "..."    # security_mode=sign 时必填
 
 dingtalk:  # 与 wecom 二选一，或同时配置两个
   webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=REPLACE_ME"
+  security_mode: sign   # sign（加签）| keyword（关键词）| ip（IP白名单，无需额外处理）
+  # secret: "SEC..."   # security_mode=sign 时必填
 
 # 报告输出扩展：控制台打印、文件/数据库存储
 # notify_console: true   # 为 true 时分析完成后将 Markdown 打印到日志

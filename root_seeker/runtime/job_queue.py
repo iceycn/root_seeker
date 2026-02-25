@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from root_seeker.domain import NormalizedErrorEvent
+from root_seeker.events import AnalysisCompletedEvent, AnalysisEventBus
 from root_seeker.services.analyzer import AnalyzerService
+from root_seeker.storage.analysis_store import AnalysisStore
 from root_seeker.storage.status_store import AnalysisStatus, StatusStore
 
 logger = logging.getLogger(__name__)
@@ -20,11 +22,20 @@ class Job:
 
 class JobQueue:
     def __init__(
-        self, *, analyzer: AnalyzerService, status_store: StatusStore, workers: int, timeout_seconds: int = 160
+        self,
+        *,
+        analyzer: AnalyzerService,
+        status_store: StatusStore,
+        store: AnalysisStore,
+        event_bus: AnalysisEventBus,
+        workers: int,
+        timeout_seconds: int = 160,
     ):
         self._queue: asyncio.Queue[Job] = asyncio.Queue()
         self._analyzer = analyzer
         self._status_store = status_store
+        self._store = store
+        self._event_bus = event_bus
         self._workers = workers
         self._timeout_seconds = timeout_seconds
         self._tasks: list[asyncio.Task] = []
@@ -78,4 +89,16 @@ class JobQueue:
                 logger.error(f"[JobQueue] Worker {worker_id} 任务失败，analysis_id={job.analysis_id}, 错误={e}", exc_info=True)
             st = st.model_copy(update={"updated_at": datetime.now(tz=timezone.utc)})
             self._status_store.save(st)
+
+            # 触发任务完成事件，payload 与 GET /analysis/{id} 返回值一致（JSON 可序列化）
+            payload: dict
+            if st.status == "completed":
+                report = self._store.load(job.analysis_id)
+                payload = report.model_dump(mode="json") if report else st.model_dump(mode="json")
+            else:
+                payload = st.model_dump(mode="json")
+            self._event_bus.emit(
+                AnalysisCompletedEvent(analysis_id=job.analysis_id, status=st.status, payload=payload)
+            )
+
             self._queue.task_done()

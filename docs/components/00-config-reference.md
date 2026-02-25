@@ -87,6 +87,8 @@
 | 配置项 | 说明 |
 |--------|------|
 | webhook_url | Webhook 地址 |
+| security_mode | 安全模式：sign（加签）\| keyword（关键词）\| ip（IP 白名单） |
+| secret | security_mode=sign 时必填，加签密钥 |
 
 ## 可选功能（跨仓库、调用链、多轮对话等）
 

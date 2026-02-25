@@ -17,20 +17,26 @@ mkdir -p "$INDEX_DIR"
 echo "Zoekt 索引目录: $INDEX_DIR"
 echo ""
 
-# 从 config.yaml 提取 local_dir（简单解析，假设格式规范）
+# 从 config.yaml 提取 service_name 与 local_dir（简单解析，假设格式规范）
+# -repo_name 与 service_name 一致，便于 RootSeeker 按 repo: 过滤
 count=0
+prev_service=""
 while IFS= read -r line; do
+  if [[ "$line" =~ service_name:[[:space:]]*\"([^\"]+)\" ]]; then
+    prev_service="${BASH_REMATCH[1]}"
+  fi
   if [[ "$line" =~ local_dir:[[:space:]]*\"([^\"]+)\" ]]; then
     dir="${BASH_REMATCH[1]}"
+    name="${prev_service:-$(basename "$dir")}"
+    prev_service=""
     if [[ -d "$dir" ]]; then
-      name=$(basename "$dir")
       echo "[$((++count))] 索引: $name -> $dir"
-      "$ZOOKT_INDEX" -index "$INDEX_DIR" "$dir" || echo "  跳过（可能已索引）"
+      "$ZOOKT_INDEX" -index "$INDEX_DIR" -repo_name "$name" "$dir" || echo "  跳过（可能已索引）"
     else
       echo "[跳过] $dir 不存在"
     fi
   fi
-done < <(grep -E "local_dir:" config.yaml 2>/dev/null || true)
+done < <(grep -E "service_name:|local_dir:" config.yaml 2>/dev/null || true)
 
 echo ""
 echo "索引完成。启动 zoekt-webserver（-rpc 启用 JSON API，供 RootSeeker 调用）:"

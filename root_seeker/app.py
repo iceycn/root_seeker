@@ -66,6 +66,7 @@ from root_seeker.sql_templates import SqlTemplate, SqlTemplateRegistry
 from root_seeker.storage.analysis_store import AnalysisStore
 from root_seeker.storage.audit_log import AuditLogger
 from root_seeker.storage.status_store import StatusStore
+from root_seeker.events import AnalysisEventBus, LogListener, NotifierCompletionListener
 from root_seeker.runtime.job_queue import Job, JobQueue
 from root_seeker.runtime.periodic_tasks import PeriodicTaskConfig, PeriodicTaskService
 from root_seeker.security import build_api_key_dependency
@@ -171,9 +172,25 @@ def create_app() -> FastAPI:
 
     notifiers: list = []
     if cfg.wecom is not None:
-        notifiers.append(WeComNotifier(WeComNotifierConfig(webhook_url=str(cfg.wecom.webhook_url))))
+        notifiers.append(
+            WeComNotifier(
+                WeComNotifierConfig(
+                    webhook_url=str(cfg.wecom.webhook_url),
+                    secret=cfg.wecom.secret,
+                    security_mode=cfg.wecom.security_mode or "ip",
+                )
+            )
+        )
     if cfg.dingtalk is not None:
-        notifiers.append(DingTalkNotifier(DingTalkNotifierConfig(webhook_url=str(cfg.dingtalk.webhook_url))))
+        notifiers.append(
+            DingTalkNotifier(
+                DingTalkNotifierConfig(
+                    webhook_url=str(cfg.dingtalk.webhook_url),
+                    secret=cfg.dingtalk.secret,
+                    security_mode=cfg.dingtalk.security_mode or "sign",
+                )
+            )
+        )
     if cfg.notify_console:
         notifiers.append(ConsoleNotifier())
     if cfg.report_store_path:
@@ -238,12 +255,22 @@ def create_app() -> FastAPI:
         graph_loader=graph_loader,
         evidence_builder=evidence_builder,
         llm=llm,
-        notifiers=notifiers,
+        notifiers=[],  # 通知改由完成事件监听器推送（NotifierCompletionListener）
         store=store,
     )
 
+    event_bus = AnalysisEventBus()
+    event_bus.add_listener(LogListener(pretty=True))
+    if notifiers:
+        event_bus.add_listener(NotifierCompletionListener(notifiers))
+
     job_queue = JobQueue(
-        analyzer=analyzer, status_store=status_store, workers=cfg.analysis_workers, timeout_seconds=cfg.analysis_timeout_seconds
+        analyzer=analyzer,
+        status_store=status_store,
+        store=store,
+        event_bus=event_bus,
+        workers=cfg.analysis_workers,
+        timeout_seconds=cfg.analysis_timeout_seconds,
     )
     repo_mirror = RepoMirror(git_timeout_seconds=cfg.git_timeout_seconds)
     
@@ -459,6 +486,8 @@ def create_app() -> FastAPI:
                 deps["qdrant"] = "not_configured"
             status["dependencies"] = deps
         return status
+
+    app.state.event_bus = event_bus
 
     @app.on_event("startup")
     async def _startup() -> None:

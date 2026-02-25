@@ -50,10 +50,20 @@ class ZoektConfig(BaseModel):
 
 class WeComConfig(BaseModel):
     webhook_url: HttpUrl
+    secret: str | None = Field(default=None, description="加签密钥，security_mode=sign 时必填（企微群机器人当前主要靠 key 鉴权）")
+    security_mode: str = Field(
+        default="ip",
+        description="安全模式：sign（加签）| keyword（关键词）| ip（IP白名单，无需额外处理）。参考 https://developer.work.weixin.qq.com/document/path/91770",
+    )
 
 
 class DingTalkConfig(BaseModel):
     webhook_url: HttpUrl
+    secret: str | None = Field(default=None, description="加签密钥，security_mode=sign 时必填")
+    security_mode: str = Field(
+        default="sign",
+        description="安全模式：sign（加签）| keyword（关键词）| ip（IP白名单，无需额外处理）。参考 https://open.dingtalk.com/document/robots/customize-robot-security-settings",
+    )
 
 
 class LlmProviderConfig(BaseModel):
