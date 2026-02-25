@@ -1,0 +1,121 @@
+data_dir: data
+audit_dir: data/audit
+api_keys: []
+analysis_workers: 2
+llm_concurrency: 4
+git_timeout_seconds: 180
+analysis_timeout_seconds: 160   # 单次分析任务超时时间（秒），默认 160 秒以保障 3 分钟 SLA
+log_level: INFO   # 日志级别：DEBUG、INFO、WARNING、ERROR（默认 INFO）
+
+aliyun_sls:
+  endpoint: "https://cn-hangzhou.log.aliyuncs.com"
+  access_key_id: "REPLACE_ME"
+  access_key_secret: "REPLACE_ME"
+  project: "your-sls-project"
+  logstore: "your-logstore"
+  topic: null
+
+sql_templates:
+  - query_key: "default_error_context"
+    query: "level:ERROR and service:{service_name} | select * from log where __time__ >= {start_ts} and __time__ <= {end_ts} limit 200"
+  # 调用链日志查询（trace_id/request_id 用 #"value" 短语语法避免阿里云分词）
+  - query_key: "trace_chain"
+    query: "(trace_id:{trace_id} or request_id:{request_id}) | select * from log where __time__ >= {start_ts} and __time__ <= {end_ts} order by __time__ asc limit 500"
+
+repos:
+  - service_name: "order-service"
+    git_url: "https://git.example.com/org/order-service.git"
+    local_dir: "/data/repos/order-service"
+    repo_aliases: ["order"]
+    language_hints: ["python"]
+    # feature: []   # 可选特性标签，便于按特性过滤或扩展
+
+zoekt:
+  api_base_url: "http://127.0.0.1:6070"
+
+wecom:
+  webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=REPLACE_ME"
+
+dingtalk:  # 与 wecom 二选一，或同时配置两个
+  webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=REPLACE_ME"
+
+# 报告输出扩展：控制台打印、文件/数据库存储
+# notify_console: true   # 为 true 时分析完成后将 Markdown 打印到日志
+# report_store_path: "data/reports.md"   # 非空时追加写入该文件（可后续导入数据库）
+# ingest_source: "aliyun_sls"   # 当前错误入口，后续可扩展 sentry/kafka
+# 跨仓库关联证据：在关联服务对应仓库内做向量检索并合并证据
+# cross_repo_evidence: false
+# cross_repo_max_services: 2
+# cross_repo_max_chunks_per_service: 3
+# 方法级调用链展开：从代码片段解析方法调用关系并迭代扩展证据，直到找出所有关联内容
+# call_graph_expansion: false   # 为 true 时启用方法级调用链展开
+# call_graph_max_rounds: 2      # 最多迭代几轮
+# call_graph_max_methods_per_round: 5   # 每轮最多找几个方法
+# call_graph_max_total_methods: 15      # 总共最多找几个方法
+# call_graph_use_tree_sitter: true   # 使用 Tree-sitter 解析方法调用（更精确），否则用正则
+# call_graph_scan_limit_dirs: ["src/main", "src"]   # 限制扫描目录，None 表示全仓库（大仓库建议限制）
+# call_graph_cache_size: 100   # 方法定位缓存大小（LRU），避免重复扫描
+
+# 多轮对话配置：参考 Cursor/Trae 的多轮对话模式，提升分析质量（默认启用混合模式）
+llm_multi_turn_enabled: true   # 是否启用多轮对话（默认 true，使用混合模式）
+llm_multi_turn_mode: "hybrid"   # 多轮对话模式：staged（分阶段）| self_refine（自我优化）| hybrid（混合）
+llm_multi_turn_max_rounds: 3    # 最大轮数
+llm_multi_turn_enable_self_review: true   # 是否启用自我审查（仅 hybrid 模式，默认 true）
+# 分阶段模式配置（staged）
+# llm_multi_turn_staged_round1: true   # 阶段1：快速定位（错误位置、类型）
+# llm_multi_turn_staged_round2: true   # 阶段2：深入分析（根本原因、假设）
+# llm_multi_turn_staged_round3: true   # 阶段3：生成建议（具体修复建议）
+# Self-Refine 模式配置（self_refine）
+# llm_multi_turn_self_refine_review_rounds: 1   # 审查轮数
+# llm_multi_turn_self_refine_improvement_threshold: 0.1   # 改进阈值（如果改进幅度小于此值，提前终止）
+
+# 日志链查询配置（使用 LLM 智能提取 trace_id/request_id）
+# trace_chain_enabled: true   # 是否启用调用链日志查询（默认启用）
+# trace_chain_time_window_seconds: 300   # 调用链查询时间窗口（秒），默认5分钟（300秒）
+# max_trace_chain_time_window_seconds: 300   # 调用链查询最大时间窗口（秒），默认5分钟（300秒），超过此值会自动调整
+
+# 定时任务配置（定期同步仓库并更新向量索引）
+# periodic_tasks_enabled: false   # 是否启用定时任务功能（总开关），默认 false
+# auto_sync_enabled: false   # 是否启用定时仓库同步（git pull），需要 periodic_tasks_enabled=true 才生效
+# auto_sync_interval_seconds: 3600   # 仓库同步间隔（秒），默认1小时（3600秒）
+# auto_index_enabled: false   # 是否启用定时向量索引更新，需要 periodic_tasks_enabled=true 才生效
+# auto_index_after_sync: true   # 仓库同步完成后是否自动触发向量索引更新（仅对有变更的仓库），默认 true
+# auto_index_interval_seconds: 7200   # 向量索引更新间隔（秒），默认2小时（7200秒），仅在 auto_index_after_sync=false 时生效
+# auto_sync_concurrency: 8   # 仓库同步并发数，默认 8
+
+# LLM 可替换策略：kind=deepseek 或 doubao
+# kind=deepseek: base_url 为 API 根地址，请求 /v1/chat/completions
+# kind=doubao: base_url 填完整对话 URL，如 https://ark.cn-beijing.volces.com/api/v3/chat/completions
+llm:
+  kind: deepseek
+  base_url: "https://api.deepseek.com"
+  api_key: "REPLACE_ME"
+  model: "deepseek-chat"
+  timeout_seconds: 90   # 多轮分析建议 90+ 秒，避免 Round 3 超时
+  # temperature: 0.2
+  # max_tokens: null
+# 豆包示例：
+# llm:
+#   kind: doubao
+#   base_url: "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+#   api_key: "REPLACE_ME"
+#   model: "deepseek-v3-1-terminus"
+#   timeout_seconds: 30
+#   temperature: 0.7
+#   max_tokens: 2000
+
+embedding:
+  kind: "fastembed"
+  model_name: "BAAI/bge-small-en-v1.5"
+  # cache_dir: "data/embedding_cache"  # 可选，模型缓存目录，便于离线复用；国内可设 HF_ENDPOINT=https://hf-mirror.com
+
+qdrant:
+  url: "http://127.0.0.1:6333"
+  api_key: null
+  collection: "code_chunks"
+
+evidence_level: "L3"
+max_evidence_files: 12
+max_evidence_chunks: 24
+max_context_chars_total: 160000
+max_context_chars_per_file: 24000
