@@ -4,7 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable | None
+from typing import Callable, Optional
 
 from root_seeker.domain import NormalizedErrorEvent
 from root_seeker.events import AnalysisCompletedEvent, AnalysisEventBus

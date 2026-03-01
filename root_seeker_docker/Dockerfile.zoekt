@@ -1,0 +1,21 @@
+# Zoekt 词法检索服务（zoekt-webserver + zoekt-index）
+# 提供 /api/search 接口，RootSeeker 调用
+# 索引目录挂载到 /data/index，初始为空；同步仓库后可 exec 执行 zoekt-index 建索引
+
+FROM golang:1.22-alpine AS builder
+# 国内网络：使用 Go 代理加速
+ENV GOPROXY=https://goproxy.cn,direct
+ENV GOTOOLCHAIN=auto
+RUN apk add --no-cache git
+# 使用 sourcegraph/zoekt（GOTOOLCHAIN=auto 可自动下载所需 Go 版本）
+RUN go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest
+RUN go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest
+
+FROM alpine:3.19
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /go/bin/zoekt-webserver /usr/local/bin/
+COPY --from=builder /go/bin/zoekt-index /usr/local/bin/
+RUN mkdir -p /data/index
+EXPOSE 6070
+# -rpc 启用 JSON API（RootSeeker 使用）
+CMD ["zoekt-webserver", "-index", "/data/index", "-listen", ":6070", "-rpc"]

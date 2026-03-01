@@ -1,5 +1,6 @@
 package com.ruoyi.web.service;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -138,7 +139,7 @@ public class RootSeekerClient {
     public Map<String, Object> configureRepo(String repoId, List<String> branches, boolean enabled) {
         String url = getBaseUrl() + "/git-source/repos/" + repoId.replace("/", "%2F");
         Map<String, Object> body = new HashMap<>();
-        body.put("branches", branches != null ? branches : List.of());
+        body.put("branches", branches != null ? branches : Collections.emptyList());
         body.put("enabled", enabled);
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, createHeaders());
         ResponseEntity<Map> resp = restTemplate.exchange(url, HttpMethod.PUT, entity, Map.class);

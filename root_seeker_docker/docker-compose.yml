@@ -1,8 +1,28 @@
-# RootSeeker Docker 编排（Qdrant + RootSeeker，无 Zoekt/Admin）
+# RootSeeker 全栈 Docker 编排
+# 包含：MySQL、Qdrant、Zoekt、RootSeeker、RootSeeker Admin
 # 用法: cd root_seeker_docker && docker compose up -d
 # 停止: docker compose down
 
 services:
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "3307:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: root_seeker
+      MYSQL_USER: root_seeker
+      MYSQL_PASSWORD: root_seeker
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   qdrant:
     image: qdrant/qdrant:v1.16.3
     ports:
@@ -12,6 +32,17 @@ services:
       - qdrant_storage:/qdrant/storage
     environment:
       - QDRANT__SERVICE__GRPC_PORT=6334
+
+  zoekt:
+    build:
+      context: ..
+      dockerfile: root_seeker_docker/Dockerfile.zoekt
+    ports:
+      - "6070:6070"
+    volumes:
+      - zoekt_index:/data/index
+      - ../data:/repos:ro
+    # 索引目录初始为空；同步仓库后可 exec 执行 zoekt-index -index /data/index -repo_name xxx /repos/repos/xxx 建索引
 
   root-seeker:
     build:
@@ -25,8 +56,33 @@ services:
     environment:
       - ROOT_SEEKER_CONFIG_PATH=/app/config.yaml
     depends_on:
-      - qdrant
-    # config.yaml 中 qdrant.url 需为 http://qdrant:6333（见 config.docker.yaml）
+      qdrant:
+        condition: service_started
+      zoekt:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+
+  root-seeker-admin:
+    build:
+      context: ../ruoyi-rootseeker-admin
+      dockerfile: ../root_seeker_docker/Dockerfile.admin
+    ports:
+      - "8088:8080"   # 宿主机 8088，避免与本地 Apache 8080 冲突
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USERNAME: root
+      MYSQL_PASSWORD: root
+      MYSQL_DATABASE: root_seeker
+      ROOT_SEEKER_BASE_URL: http://root-seeker:8000
+    depends_on:
+      mysql:
+        condition: service_healthy
+      root-seeker:
+        condition: service_started
 
 volumes:
+  mysql_data:
   qdrant_storage:
+  zoekt_index:

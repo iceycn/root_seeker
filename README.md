@@ -70,12 +70,16 @@ Copy-Item config.example.yaml config.yaml
 
 ### Docker 部署（可选）
 
-若已安装 Docker，可使用 `root_seeker_docker` 快速启动 Qdrant + RootSeeker：
+若已安装 Docker，可使用 `root_seeker_docker` 一键启动 Qdrant + RootSeeker：
 
 ```bash
-cd root_seeker_docker
-docker compose up -d
+# 一键启动（自动处理 config.yaml 与 qdrant 地址）
+bash root_seeker_docker/start.sh
 ```
+
+Windows PowerShell：`.\root_seeker_docker\start.ps1`
+
+或手动：`cd root_seeker_docker && docker compose up -d`
 
 详见 [root_seeker_docker/README.md](root_seeker_docker/README.md)
 

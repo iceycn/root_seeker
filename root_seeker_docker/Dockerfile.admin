@@ -1,0 +1,23 @@
+# RootSeeker Admin（若依 Java 管理端）
+# 构建 context 为 ruoyi-rootseeker-admin 目录，避免 .dockerignore 排除
+
+FROM maven:3.9-eclipse-temurin-8 AS builder
+WORKDIR /build
+
+# 复制 ruoyi 项目（context 为 ruoyi-rootseeker-admin）
+COPY . /build
+
+# 构建（跳过测试以加快构建）
+RUN mvn clean package -DskipTests -q
+
+# 运行阶段
+FROM eclipse-temurin:8-jre
+WORKDIR /app
+
+# 复制 jar（ruoyi-admin 为可执行 jar）
+COPY --from=builder /build/ruoyi-admin/target/ruoyi-admin.jar /app/
+
+EXPOSE 8080
+# 强制 JVM 使用 UTF-8，避免中文乱码
+ENV JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF-8 -Dsun.jnu.encoding=UTF-8"
+ENTRYPOINT ["java", "-Dfile.encoding=UTF-8", "-jar", "ruoyi-admin.jar"]

@@ -1,5 +1,6 @@
 package com.ruoyi.web.controller.gitsource;
 
+import java.util.Collections;
 import java.util.Map;
 import org.apache.shiro.authz.annotation.RequiresPermissions;
 import org.slf4j.Logger;
@@ -120,7 +121,7 @@ public class AppConfigController extends BaseController {
             return error("系统配置请使用配置来源切换");
         }
         try {
-            rootSeekerClient.saveConfigCategory(category, config != null ? config : Map.of());
+            rootSeekerClient.saveConfigCategory(category, config != null ? config : Collections.emptyMap());
             rootSeekerClient.notifyConfigChanged();
             return success();
         } catch (Exception e) {

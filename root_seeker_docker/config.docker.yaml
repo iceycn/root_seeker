@@ -1,8 +1,35 @@
 # Docker 环境下的 config 覆盖片段
-# 用法：将 qdrant.url 等合并到主 config.yaml，或作为覆盖
-# 在 docker-compose 中可挂载此文件并合并，此处仅作参考
+# 用法：合并到主 config.yaml，start.sh/start.ps1 会自动合并
+# 容器内使用服务名：qdrant、zoekt、mysql
+# 默认使用 MySQL 模式，配置可在 Admin「AI应用配置」中管理
+
+config_source: database
 
 qdrant:
-  url: "http://qdrant:6333"   # 容器内使用服务名
+  url: "http://qdrant:6333"
   api_key: null
   collection: "code_chunks"
+
+zoekt:
+  api_base_url: "http://zoekt:6070"
+
+# 数据库模式时连接 MySQL 容器（config_source=database 时生效）
+config_db:
+  host: "mysql"
+  port: 3306
+  user: "root"
+  password: "root"
+  database: "root_seeker"
+
+# Git 仓库发现：MySQL 存储，与 Admin 共用 git_source_repos 表（Demo 仓库已预置）
+git_source:
+  enabled: true
+  repos_base_dir: "/app/data/repos_from_git"
+  storage:
+    type: mysql
+    host: mysql
+    port: 3306
+    user: root
+    password: root
+    database: root_seeker
+

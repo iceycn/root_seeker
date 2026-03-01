@@ -3,7 +3,7 @@
 ---
 # RootSeeker 服务配置（拉取列表、同步等操作需调用）
 root-seeker:
-  base-url: http://localhost:8000
+  base-url: ${ROOT_SEEKER_BASE_URL:http://localhost:8000}
   api-key: ${ROOT_SEEKER_API_KEY:}
 
 # 项目相关配置
@@ -28,6 +28,11 @@ server:
   servlet:
     # 应用的访问路径
     context-path: /
+    # 强制请求/响应使用 UTF-8，避免中文乱码
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
   tomcat:
     # tomcat的URI编码
     uri-encoding: UTF-8

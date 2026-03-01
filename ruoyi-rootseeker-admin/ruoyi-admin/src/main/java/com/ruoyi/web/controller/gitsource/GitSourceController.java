@@ -1,5 +1,7 @@
 package com.ruoyi.web.controller.gitsource;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -95,8 +97,8 @@ public class GitSourceController extends BaseController {
         if (rows > 0) {
             try {
                 List<String> branches = branchesStr != null && !branchesStr.isEmpty()
-                    ? List.of(branchesStr.trim().split("\\s*,\\s*"))
-                    : List.of(repo.getDefaultBranch() != null ? repo.getDefaultBranch() : "main");
+                    ? Arrays.asList(branchesStr.trim().split("\\s*,\\s*"))
+                    : Collections.singletonList(repo.getDefaultBranch() != null ? repo.getDefaultBranch() : "main");
                 rootSeekerClient.configureRepo(repo.getId(), branches, repo.getEnabled() == 1);
                 rootSeekerClient.notifyRepoChanged();
             } catch (Exception e) {

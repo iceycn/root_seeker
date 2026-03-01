@@ -3,6 +3,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# 安装 Git（仓库同步 POST /repos/sync 需要）
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
 # 安装依赖（.dockerignore 已排除无关文件）
 COPY . .
 RUN pip install --no-cache-dir -e ".[mysql]" && pip cache purge
