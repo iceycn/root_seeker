@@ -1,3 +1,15 @@
+# 配置来源：file=config.yaml，database=数据库 app_config 表（需 config_db 或 git_source.storage.type=mysql）
+config_source: file   # file | database
+
+# 数据库模式时连接 app_config 表（config_source=database 时必填；也可用 git_source.storage.type=mysql 复用）
+# 各项目维护自己的 config.yaml，不跨项目读取。与 RootSeeker Admin 共用同一库时，两边配置相同 host/port/user/password 即可
+config_db:
+  host: "localhost"
+  port: 3306
+  user: "root"
+  password: "REPLACE_ME"
+  database: "root_seeker"
+
 data_dir: data
 audit_dir: data/audit
 api_keys: []
@@ -117,6 +129,23 @@ qdrant:
   url: "http://127.0.0.1:6333"
   api_key: null
   collection: "code_chunks"
+
+# Git 仓库发现：根据域名+账号密码获取仓库列表，支持分支选择与定期同步
+# 存储默认用文件，可切换 MySQL（需 pip install root-seeker[mysql]）
+# git_source:
+#   enabled: true
+#   repos_base_dir: "data/repos_from_git"
+#   storage:
+#     type: "file"
+#     file_path: "data/git_source.json"
+#   # MySQL 存储示例（各项目维护自己的 config.yaml，与 Admin 共用库时两边配置相同 host/port 等）：
+#   # storage:
+#   #   type: "mysql"
+#   #   host: "localhost"
+#   #   port: 3306
+#   #   user: "root"
+#   #   password: "xxx"
+#   #   database: "root_seeker"
 
 evidence_level: "L3"
 max_evidence_files: 12

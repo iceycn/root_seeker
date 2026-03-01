@@ -31,23 +31,34 @@ go install github.com/google/zoekt/cmd/zoekt-webserver@latest
 echo "Zoekt 已安装到: $(go env GOPATH)/bin"
 
 echo ""
-echo "=== 4. Qdrant（向量库，macOS 二进制，无 Docker）==="
+echo "=== 4. Qdrant（向量库，macOS/Linux 二进制，无 Docker）==="
 mkdir -p "${TOOLS_DIR}"
 ARCH=$(uname -m)
-case "${ARCH}" in
-  arm64|aarch64)
-    QDRANT_ARCH="aarch64-apple-darwin"
+OS=$(uname -s)
+case "${OS}" in
+  Darwin)
+    case "${ARCH}" in
+      arm64|aarch64) QDRANT_ARCH="aarch64-apple-darwin" ;;
+      x86_64)        QDRANT_ARCH="x86_64-apple-darwin" ;;
+      *) echo "macOS 架构 ${ARCH} 未支持"; exit 1 ;;
+    esac
+    QDRANT_SUFFIX=".tar.gz"
     ;;
-  x86_64)
-    QDRANT_ARCH="x86_64-apple-darwin"
+  Linux)
+    case "${ARCH}" in
+      x86_64)  QDRANT_ARCH="x86_64-unknown-linux-gnu" ;;
+      aarch64|arm64) QDRANT_ARCH="aarch64-unknown-linux-gnu" ;;
+      *) echo "Linux 架构 ${ARCH} 未支持"; exit 1 ;;
+    esac
+    QDRANT_SUFFIX=".tar.gz"
     ;;
   *)
-    echo "当前架构 ${ARCH} 未提供预编译包，请从 https://github.com/qdrant/qdrant/releases 查看或使用 Docker。"
+    echo "当前系统 ${OS} 未提供预编译包，请从 https://github.com/qdrant/qdrant/releases 查看或使用 root_seeker_docker。"
     exit 1
     ;;
 esac
 
-QDRANT_TGZ="qdrant-${QDRANT_ARCH}.tar.gz"
+QDRANT_TGZ="qdrant-${QDRANT_ARCH}${QDRANT_SUFFIX}"
 QDRANT_URL="https://github.com/qdrant/qdrant/releases/download/${QDRANT_VERSION}/${QDRANT_TGZ}"
 if [[ ! -f "${TOOLS_DIR}/qdrant" ]]; then
   echo "下载 Qdrant: ${QDRANT_URL}"

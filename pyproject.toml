@@ -18,14 +18,17 @@ dependencies = [
   "fastembed>=0.3",
 ]
 
-[tool.setuptools.packages.find]
-include = ["root_seeker*"]
-
 [project.optional-dependencies]
+mysql = [
+  "PyMySQL>=1.1",
+]
 dev = [
   "pytest>=8.0",
   "ruff>=0.5",
 ]
+
+[tool.setuptools.packages.find]
+include = ["root_seeker*"]
 
 [tool.ruff]
 line-length = 100

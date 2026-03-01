@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.GitSourceRepoMapper">
+    <resultMap type="com.ruoyi.system.domain.GitSourceRepo" id="GitSourceRepoResult">
+        <id property="id" column="id"/>
+        <result property="fullName" column="full_name"/>
+        <result property="fullPath" column="full_path"/>
+        <result property="platformId" column="platform_id"/>
+        <result property="gitUrl" column="git_url"/>
+        <result property="defaultBranch" column="default_branch"/>
+        <result property="description" column="description"/>
+        <result property="selectedBranches" column="selected_branches"/>
+        <result property="enabled" column="enabled"/>
+        <result property="localDir" column="local_dir"/>
+        <result property="lastSyncAt" column="last_sync_at"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="extra" column="extra"/>
+    </resultMap>
+
+    <sql id="selectRepoVo">
+        select id, full_name, full_path, platform_id, git_url, default_branch, description, selected_branches, enabled, local_dir, last_sync_at, created_at, extra
+        from git_source_repos
+    </sql>
+
+    <select id="selectRepoList" parameterType="com.ruoyi.system.domain.GitSourceRepo" resultMap="GitSourceRepoResult">
+        <include refid="selectRepoVo"/>
+        <where>
+            <if test="fullName != null and fullName != ''">and full_name like concat('%', #{fullName}, '%')</if>
+            <if test="enabled != null">and enabled = #{enabled}</if>
+        </where>
+        order by full_name
+    </select>
+
+    <select id="selectRepoById" resultMap="GitSourceRepoResult">
+        <include refid="selectRepoVo"/> where id = #{id}
+    </select>
+
+    <insert id="insertRepo" parameterType="com.ruoyi.system.domain.GitSourceRepo">
+        insert into git_source_repos (id, full_name, full_path, platform_id, git_url, default_branch, description, selected_branches, enabled, local_dir, last_sync_at, created_at, extra)
+        values (#{id}, #{fullName}, #{fullPath}, #{platformId}, #{gitUrl}, #{defaultBranch}, #{description}, #{selectedBranches}, #{enabled}, #{localDir}, #{lastSyncAt}, #{createdAt}, #{extra})
+    </insert>
+
+    <update id="updateRepo" parameterType="com.ruoyi.system.domain.GitSourceRepo">
+        update git_source_repos
+        <set>
+            <if test="fullName != null">full_name=#{fullName},</if>
+            <if test="fullPath != null">full_path=#{fullPath},</if>
+            <if test="platformId != null">platform_id=#{platformId},</if>
+            <if test="gitUrl != null">git_url=#{gitUrl},</if>
+            <if test="defaultBranch != null">default_branch=#{defaultBranch},</if>
+            <if test="description != null">description=#{description},</if>
+            <if test="selectedBranches != null">selected_branches=#{selectedBranches},</if>
+            <if test="enabled != null">enabled=#{enabled},</if>
+            <if test="localDir != null">local_dir=#{localDir},</if>
+            <if test="lastSyncAt != null">last_sync_at=#{lastSyncAt},</if>
+            <if test="extra != null">extra=#{extra},</if>
+        </set>
+        where id = #{id}
+    </update>
+
+    <delete id="deleteRepoById">
+        delete from git_source_repos where id = #{id}
+    </delete>
+
+    <delete id="deleteRepoByIds">
+        delete from git_source_repos where id in
+        <foreach item="id" collection="array" open="(" separator="," close=")">#{id}</foreach>
+    </delete>
+</mapper>

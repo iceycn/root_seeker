@@ -1,0 +1,211 @@
+# 依赖组件安装指南
+
+本文档说明如何自行安装 RootSeeker 所需的依赖组件，尤其是 **Qdrant**（向量库）和 **Zoekt**（词法检索）。若使用一键脚本 `scripts/install-without-docker.sh`，可自动完成大部分安装。
+
+## 一、总览
+
+| 组件 | 用途 | 必选 | 安装方式 |
+|------|------|------|----------|
+| **Qdrant** | 代码向量检索 | 推荐 | Docker / 二进制 |
+| **Zoekt** | 代码词法/符号检索 | 可选 | Go 编译 |
+| Python | RootSeeker 核心 | 必选 | 见 [README](../README.md) |
+| Go | Zoekt 编译依赖 | Zoekt 必选 | [go.dev/dl](https://go.dev/dl/) |
+
+---
+
+## 二、Qdrant 安装
+
+### 2.1 Docker 安装（推荐，跨平台）
+
+```bash
+# 创建持久化目录
+mkdir -p /data/qdrant_storage
+
+# 启动 Qdrant
+docker run -d \
+  --name qdrant \
+  -p 6333:6333 \
+  -p 6334:6334 \
+  -v /data/qdrant_storage:/qdrant/storage:z \
+  qdrant/qdrant
+```
+
+- **端口**：6333（HTTP API）、6334（gRPC）
+- **验证**：`curl -s http://127.0.0.1:6333/collections` 返回 JSON 即正常
+- **Web UI**：`http://127.0.0.1:6333/dashboard`
+
+### 2.2 二进制安装（macOS / Linux，无 Docker）
+
+从 [Qdrant GitHub Releases](https://github.com/qdrant/qdrant/releases) 下载对应平台的压缩包：
+
+| 平台 | 架构 | 文件名示例 |
+|------|------|------------|
+| macOS | arm64 (M1/M2) | `qdrant-aarch64-apple-darwin.tar.gz` |
+| macOS | x86_64 | `qdrant-x86_64-apple-darwin.tar.gz` |
+| Linux | x86_64 | `qdrant-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux | aarch64 | `qdrant-aarch64-unknown-linux-gnu.tar.gz` |
+
+**安装步骤**：
+
+```bash
+# 1. 下载（以 v1.16.3、Linux x86_64 为例）
+QDRANT_VERSION="v1.16.3"
+ARCH="x86_64-unknown-linux-gnu"   # 或 aarch64-unknown-linux-gnu、aarch64-apple-darwin、x86_64-apple-darwin
+curl -sL -o qdrant.tar.gz "https://github.com/qdrant/qdrant/releases/download/${QDRANT_VERSION}/qdrant-${ARCH}.tar.gz"
+
+# 2. 解压
+tar -xzf qdrant.tar.gz
+chmod +x qdrant
+
+# 3. 移动到 PATH 或项目 tools 目录
+mv qdrant /usr/local/bin/   # 或 mkdir -p tools && mv qdrant tools/
+```
+
+**使用项目配置启动**（在项目根目录）：
+
+```bash
+./tools/qdrant --config-path config/qdrant_config.yaml
+```
+
+数据目录为 `./data/qdrant_storage`（见 `config/qdrant_config.yaml`）。
+
+### 2.3 Windows
+
+Windows 无官方预编译二进制，推荐使用 **Docker Desktop** 运行 Qdrant 容器，或使用 WSL2 按 Linux 方式安装。
+
+### 2.4 配置 RootSeeker
+
+在 `config.yaml` 中配置：
+
+```yaml
+qdrant:
+  url: "http://127.0.0.1:6333"
+  api_key: null   # 生产环境可开启鉴权
+  collection: "code_chunks"
+```
+
+---
+
+## 三、Zoekt 安装
+
+Zoekt 无预编译二进制，需通过 **Go** 编译安装。
+
+### 3.1 安装 Go
+
+- **macOS**：`brew install go`
+- **Linux**：`apt install golang`（Debian/Ubuntu）或 [go.dev/dl](https://go.dev/dl/) 下载
+- **Windows**：[go.dev/dl](https://go.dev/dl/) 或 `choco install golang`
+
+验证：`go version`（需 Go 1.19+）
+
+### 3.2 安装 Zoekt
+
+```bash
+# 使用 Google 官方版本（API 兼容）
+go install github.com/google/zoekt/cmd/zoekt-index@latest
+go install github.com/google/zoekt/cmd/zoekt-webserver@latest
+
+# 或使用 Sourcegraph 维护版本（功能更多）
+# go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest
+# go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest
+```
+
+安装后二进制位于 `$(go env GOPATH)/bin/`，需加入 PATH：
+
+```bash
+export PATH="$(go env GOPATH)/bin:$PATH"
+```
+
+### 3.3 建索引与启动服务
+
+```bash
+# 1. 创建索引目录
+export ZOOKT_INDEX_DIR=/data/zoekt/index   # 或项目内 data/zoekt/index
+mkdir -p "$ZOOKT_INDEX_DIR"
+
+# 2. 为每个仓库建索引（-repo_name 建议与 config.yaml 中 service_name 一致）
+zoekt-index -index "$ZOOKT_INDEX_DIR" -repo_name "order-service" /path/to/order-service
+
+# 3. 启动搜索服务
+zoekt-webserver -index "$ZOOKT_INDEX_DIR" -listen ":6070"
+```
+
+或使用项目脚本批量建索引：
+
+```bash
+bash scripts/index-zoekt-all.sh
+# 然后启动: zoekt-webserver -index data/zoekt/index -listen :6070
+```
+
+### 3.4 验证
+
+```bash
+curl -s -X POST "http://127.0.0.1:6070/api/search" \
+  -H "Content-Type: application/json" \
+  -d '{"Q":"Exception","Opts":{"NumContextLines":3,"MaxMatchCount":10}}'
+```
+
+返回 JSON（含 FileMatches）即正常。
+
+### 3.5 配置 RootSeeker
+
+在 `config.yaml` 中配置：
+
+```yaml
+zoekt:
+  api_base_url: "http://127.0.0.1:6070"
+```
+
+### 3.6 Windows 说明
+
+Zoekt 依赖 Go，Windows 上可通过 `go install` 安装，但需确保 `zoekt-index`、`zoekt-webserver` 在 PATH 中。若遇兼容问题，建议使用 WSL2。
+
+---
+
+## 四、一键安装（推荐）
+
+在项目根目录执行：
+
+```bash
+# macOS / Linux
+bash scripts/install-without-docker.sh
+```
+
+该脚本会：
+
+1. 安装 Python 依赖（`pip install -e .`）
+2. 安装 Go（若无，macOS 通过 Homebrew）
+3. 安装 Zoekt（`go install`）
+4. 下载 Qdrant 二进制到 `tools/qdrant`
+
+完成后按提示启动 Qdrant、Zoekt 及 RootSeeker。
+
+---
+
+## 五、常见问题
+
+### Qdrant 连接失败
+
+- 确认 Qdrant 已启动：`curl http://127.0.0.1:6333/collections`
+- 检查 `config.yaml` 中 `qdrant.url` 与 Qdrant 监听地址一致
+- 若使用 Docker，确认端口映射正确
+
+### Zoekt 无命中结果
+
+- 确认已对目标仓库建索引：`zoekt-index -index <dir> -repo_name <name> <repo_path>`
+- 确认 `config.yaml` 中 `repos[].local_dir` 与建索引时路径一致（或为同一目录）
+- 确认 zoekt-webserver 已启动并监听 6070
+
+### 索引更新（仓库 git pull 后）
+
+- **向量**：执行 `POST /index/repo/{service_name}` 或 `POST /repos/full-reload`
+- **Zoekt**：重新执行 `zoekt-index` 对变更仓库建索引，再重启 zoekt-webserver 或等待自动重载
+
+---
+
+## 六、相关文档
+
+- [部署总览](deploy/00-overview.md) - 组件依赖与部署顺序
+- [Zoekt 傻瓜部署](deploy/01-zoekt.md) - Zoekt 详细说明
+- [Qdrant 傻瓜部署](deploy/02-qdrant.md) - Qdrant 详细说明
+- [README](../README.md) - 快速开始

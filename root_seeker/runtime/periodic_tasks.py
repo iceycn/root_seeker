@@ -30,6 +30,7 @@ class PeriodicTaskConfig:
     auto_index_after_sync: bool = True
     auto_index_interval_seconds: int = 7200
     auto_sync_concurrency: int = 8
+    auto_index_concurrency: int = 1
 
 
 class PeriodicTaskService:
@@ -42,11 +43,13 @@ class PeriodicTaskService:
         repos: list[RepoConfig],
         repo_mirror: RepoMirror,
         vector_indexer: VectorIndexer | None = None,
+        index_semaphore: asyncio.Semaphore | None = None,
     ):
         self._cfg = cfg
         self._repos = repos
         self._repo_mirror = repo_mirror
         self._vector_indexer = vector_indexer
+        self._index_semaphore = index_semaphore or asyncio.Semaphore(1)
         self._sync_task: asyncio.Task | None = None
         self._index_task: asyncio.Task | None = None
         self._running = False
@@ -149,6 +152,7 @@ class PeriodicTaskService:
         error_count = 0
         no_change_count = 0
         updated_repos: list[str] = []
+        updated_status: dict[str, str] = {}  # service_name -> "updated" | "cloned"
         
         for result in results:
             if isinstance(result, Exception):
@@ -160,10 +164,12 @@ class PeriodicTaskService:
             if sync_result.status == "updated":
                 success_count += 1
                 updated_repos.append(service_name)
+                updated_status[service_name] = "updated"
                 logger.info(f"[PeriodicTaskService] 仓库有更新：{service_name}")
             elif sync_result.status == "cloned":
                 success_count += 1
                 updated_repos.append(service_name)  # 新克隆的仓库也需要索引
+                updated_status[service_name] = "cloned"
                 logger.info(f"[PeriodicTaskService] 仓库已克隆：{service_name}")
             elif sync_result.status == "no_change":
                 success_count += 1
@@ -188,11 +194,11 @@ class PeriodicTaskService:
             and updated_repos
             and self._vector_indexer is not None
         ):
+            # updated_status: updated=git pull 有变更（可增量）; cloned=新克隆（需全量）
             logger.info(
                 f"[PeriodicTaskService] 检测到 {len(updated_repos)} 个仓库有变更，开始自动触发向量索引更新"
             )
-            # 异步触发索引更新，不阻塞同步任务
-            asyncio.create_task(self._index_repos(updated_repos))
+            asyncio.create_task(self._index_repos(updated_repos, updated_status))
         elif updated_repos:
             logger.debug(
                 f"[PeriodicTaskService] 检测到 {len(updated_repos)} 个仓库有变更，"
@@ -211,10 +217,14 @@ class PeriodicTaskService:
             return
         
         repo_names = [r.service_name for r in self._repos]
-        await self._index_repos(repo_names)
+        await self._index_repos(repo_names, updated_status=None)  # 全量，非 sync 触发
     
-    async def _index_repos(self, service_names: list[str]) -> None:
-        """为指定的服务更新向量索引"""
+    async def _index_repos(
+        self,
+        service_names: list[str],
+        updated_status: dict[str, str] | None = None,
+    ) -> None:
+        """为指定的服务更新向量索引。updated_status 为 sync 结果，用于决定是否增量索引。"""
         if self._vector_indexer is None:
             logger.warning("[PeriodicTaskService] 向量索引器未配置，跳过索引更新")
             return
@@ -223,6 +233,7 @@ class PeriodicTaskService:
             logger.debug("[PeriodicTaskService] 没有需要索引的服务，跳过")
             return
         
+        status_map = updated_status or {}
         logger.info(f"[PeriodicTaskService] 开始为 {len(service_names)} 个服务更新向量索引")
         
         # 找到对应的仓库配置
@@ -238,12 +249,19 @@ class PeriodicTaskService:
                 error_count += 1
                 continue
             
+            # updated=pull 有变更，可尝试增量；cloned=新克隆，必须全量
+            incremental = status_map.get(service_name) == "updated"
             try:
-                logger.info(f"[PeriodicTaskService] 开始索引仓库：{service_name}, repo={repo.local_dir}")
-                count = await self._vector_indexer.index_repo(
-                    repo_local_dir=repo.local_dir,
-                    service_name=service_name,
-                )
+                async with self._index_semaphore:
+                    logger.info(
+                        f"[PeriodicTaskService] 开始索引仓库：{service_name}, "
+                        f"repo={repo.local_dir}, incremental={incremental}"
+                    )
+                    count = await self._vector_indexer.index_repo(
+                        repo_local_dir=repo.local_dir,
+                        service_name=service_name,
+                        incremental=incremental,
+                    )
                 logger.info(f"[PeriodicTaskService] 仓库索引完成：{service_name}, 索引块数={count}")
                 success_count += 1
             except Exception as e:

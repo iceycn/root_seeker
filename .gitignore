@@ -8,6 +8,7 @@ config.yaml
 # 运行时数据与索引
 data/
 tools/
+logs/
 
 # Python
 __pycache__/

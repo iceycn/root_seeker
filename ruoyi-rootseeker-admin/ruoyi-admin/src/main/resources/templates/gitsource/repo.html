@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh" xmlns:th="http://www.thymeleaf.org" xmlns:shiro="http://www.pollix.at/thymeleaf/shiro">
+<head>
+	<th:block th:include="include :: header('Git 仓库管理')" />
+</head>
+<body class="gray-bg">
+    <div class="container-div">
+		<div class="row">
+			<div class="col-sm-12 search-collapse">
+				<form id="repo-form">
+					<div class="select-list">
+						<ul>
+							<li>仓库名：<input type="text" name="fullName"/></li>
+							<li>启用：<select name="enabled">
+								<option value="">全部</option>
+								<option value="1">是</option>
+								<option value="0">否</option>
+							</select></li>
+							<li>
+								<a class="btn btn-primary btn-rounded btn-sm" onclick="$.table.search()"><i class="fa fa-search"></i>&nbsp;搜索</a>
+								<a class="btn btn-warning btn-rounded btn-sm" onclick="$.form.reset()"><i class="fa fa-refresh"></i>&nbsp;重置</a>
+							</li>
+						</ul>
+					</div>
+				</form>
+			</div>
+			<div class="btn-group-sm" id="toolbar" role="group">
+				<a class="btn btn-success" onclick="fetchRepos()" shiro:hasPermission="gitsource:repo:add">
+					<i class="fa fa-download"></i> 拉取仓库列表
+				</a>
+				<a class="btn btn-primary" onclick="syncRepos()" shiro:hasPermission="gitsource:repo:edit">
+					<i class="fa fa-refresh"></i> 同步仓库
+				</a>
+				<a class="btn btn-danger" onclick="resetAllIndex(false)" shiro:hasPermission="gitsource:repo:edit">
+					<i class="fa fa-trash"></i> 全量清除索引
+				</a>
+				<a class="btn btn-danger" onclick="resetAllIndex(true)" shiro:hasPermission="gitsource:repo:edit">
+					<i class="fa fa-refresh"></i> 全量重索引
+				</a>
+				<a class="btn btn-warning" onclick="fullReloadRepos()" shiro:hasPermission="gitsource:repo:edit">
+					<i class="fa fa-repeat"></i> 全量重载
+				</a>
+				<a class="btn btn-info" onclick="credentialPage()" shiro:hasPermission="gitsource:credential:view">
+					<i class="fa fa-key"></i> 凭证配置
+				</a>
+				<a class="btn btn-warning" onclick="configPage()" shiro:hasPermission="gitsource:config:view">
+					<i class="fa fa-cog"></i> RootSeeker 配置
+				</a>
+				<a class="btn btn-default" onclick="appConfigPage()" shiro:hasPermission="gitsource:config:view">
+					<i class="fa fa-database"></i> AI应用配置
+				</a>
+			</div>
+			<div class="col-sm-12 select-table table-striped">
+				<table id="bootstrap-table"></table>
+			</div>
+		</div>
+	</div>
+	<th:block th:include="include :: footer" />
+	<script th:inline="javascript">
+		var editFlag = [[${@permission.hasPermi('gitsource:repo:edit')}]];
+		var prefix = ctx + "gitsource";
+		var indexStatusMap = {};
+
+		function getServiceName(row) {
+			return (row.fullName || '').replace(/\//g, '-');
+		}
+
+		function formatIndexStatus(status) {
+			if (!status) return '<span class="text-muted">—</span>';
+			var q = status.qdrant_indexed ? '<span class="badge badge-success">已索引</span>' : '<span class="badge badge-secondary">未索引</span>';
+			if (status.qdrant_indexing) q = '<span class="badge badge-warning">索引中</span>';
+			var z = status.zoekt_indexed === null ? '<span class="text-muted">—</span>' : (status.zoekt_indexed ? '<span class="badge badge-success">已索引</span>' : '<span class="badge badge-secondary">未索引</span>');
+			if (status.zoekt_indexing) z = '<span class="badge badge-warning">索引中</span>';
+			return 'Qdrant: ' + q + ' &nbsp; Zoekt: ' + z;
+		}
+
+		$(function() {
+			loadIndexStatus();
+			var options = {
+				url: prefix + "/repo/list",
+				sortName: "fullName",
+				sortOrder: "asc",
+				modalName: "仓库",
+				columns: [{
+					checkbox: true
+				}, {
+					field: 'fullName',
+					title: '仓库名',
+					formatter: function(value, row, index) {
+						return $.table.tooltip(value || '');
+					}
+				}, {
+					field: 'defaultBranch',
+					title: '默认分支'
+				}, {
+					field: 'enabled',
+					title: '启用',
+					formatter: function(value) {
+						return value == 1 ? '<span class="badge badge-success">是</span>' : '<span class="badge badge-secondary">否</span>';
+					}
+				}, {
+					field: 'localDir',
+					title: '本地目录',
+					formatter: function(value) {
+						return $.table.tooltip(value, 20, "open");
+					}
+				}, {
+					title: 'Qdrant / Zoekt',
+					align: 'center',
+					formatter: function(value, row, index) {
+						var sn = getServiceName(row);
+						return formatIndexStatus(indexStatusMap[sn]);
+					}
+				}, {
+					field: 'lastSyncAt',
+					title: '最后同步'
+				}, {
+					title: '操作',
+					align: 'center',
+					formatter: function(value, row, index) {
+						var actions = [];
+						actions.push('<a class="btn btn-success btn-xs ' + editFlag + '" href="javascript:void(0)" onclick="$.modal.open(\'编辑仓库\', \'' + prefix + '/repo/edit?id=' + encodeURIComponent(row.id) + '\')"><i class="fa fa-edit"></i>编辑</a> ');
+						if (editFlag && row.enabled == 1) {
+							var sn = getServiceName(row);
+							actions.push('<a class="btn btn-primary btn-xs" href="javascript:void(0)" onclick="indexRepo(\'' + sn.replace(/'/g, "\\'") + '\')"><i class="fa fa-database"></i>索引</a> ');
+							actions.push('<a class="btn btn-warning btn-xs" href="javascript:void(0)" onclick="resetRepoIndex(\'' + sn.replace(/'/g, "\\'") + '\')"><i class="fa fa-refresh"></i>重置</a> ');
+							actions.push('<a class="btn btn-danger btn-xs" href="javascript:void(0)" onclick="clearRepoIndex(\'' + sn.replace(/'/g, "\\'") + '\')"><i class="fa fa-trash"></i>清除</a> ');
+						}
+						return actions.join('');
+					}
+				}]
+			};
+			$.table.init(options);
+		});
+
+		function loadIndexStatus() {
+			$.ajax({
+				url: prefix + "/index/status",
+				type: "get",
+				dataType: "json",
+				success: function(result) {
+					if (result.code == web_status.SUCCESS && result.data && result.data.repos) {
+						indexStatusMap = {};
+						for (var i = 0; i < result.data.repos.length; i++) {
+							var r = result.data.repos[i];
+							indexStatusMap[r.service_name] = r;
+						}
+						$('#bootstrap-table').bootstrapTable('refresh');
+					}
+				}
+			});
+		}
+
+		function fetchRepos() {
+			var url = ctx + "gitsource/credential";
+			$.modal.openTab("凭证配置", url);
+		}
+
+		function credentialPage() {
+			var url = ctx + "gitsource/credential";
+			$.modal.openTab("凭证配置", url);
+		}
+
+		function configPage() {
+			var url = ctx + "gitsource/config";
+			$.modal.openTab("RootSeeker 配置", url);
+		}
+		function appConfigPage() {
+			var url = ctx + "gitsource/appconfig";
+			$.modal.openTab("AI应用配置", url);
+		}
+
+		function syncRepos() {
+			$.modal.loading("正在同步...");
+			$.ajax({
+				url: prefix + "/sync",
+				type: "post",
+				dataType: "json",
+				success: function(result) {
+					$.modal.closeLoading();
+					if (result.code == web_status.SUCCESS) {
+						$.modal.msgSuccess(result.msg);
+						$.table.refresh();
+						loadIndexStatus();
+					} else {
+						$.modal.alertError(result.msg);
+					}
+				},
+				error: function() {
+					$.modal.closeLoading();
+					$.modal.alertError("同步失败，请确保 RootSeeker 服务已启动且 api_key 已配置");
+				}
+			});
+		}
+
+		function indexRepo(serviceName) {
+			$.modal.loading("正在索引...");
+			$.ajax({
+				url: prefix + "/index/repo",
+				type: "post",
+				data: { serviceName: serviceName, incremental: false },
+				dataType: "json",
+				success: function(result) {
+					$.modal.closeLoading();
+					if (result.code == web_status.SUCCESS) {
+						$.modal.msgSuccess("索引完成：" + (result.data && result.data.indexed_chunks ? result.data.indexed_chunks + " 块" : ""));
+						loadIndexStatus();
+					} else {
+						$.modal.alertError(result.msg);
+					}
+				},
+				error: function(xhr) {
+					$.modal.closeLoading();
+					$.modal.alertError("索引失败：" + (xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : "请检查 RootSeeker 服务"));
+				}
+			});
+		}
+
+		function resetRepoIndex(serviceName) {
+			$.modal.confirm("确定清除并重新索引该仓库？", function() {
+				$.modal.loading("正在重置...");
+				$.ajax({
+					url: prefix + "/index/repo/reset",
+					type: "post",
+					data: { serviceName: serviceName },
+					dataType: "json",
+					success: function(result) {
+						$.modal.closeLoading();
+						if (result.code == web_status.SUCCESS) {
+							$.modal.msgSuccess("重置完成");
+							loadIndexStatus();
+						} else {
+							$.modal.alertError(result.msg);
+						}
+					},
+					error: function(xhr) {
+						$.modal.closeLoading();
+						$.modal.alertError("重置失败：" + (xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : ""));
+					}
+				});
+			});
+		}
+
+		function clearRepoIndex(serviceName) {
+			$.modal.confirm("确定清除该仓库的向量索引？", function() {
+				$.ajax({
+					url: prefix + "/index/repo/clear",
+					type: "post",
+					data: { serviceName: serviceName },
+					dataType: "json",
+					success: function(result) {
+						if (result.code == web_status.SUCCESS) {
+							$.modal.msgSuccess("已清除");
+							loadIndexStatus();
+						} else {
+							$.modal.alertError(result.msg);
+						}
+					}
+				});
+			});
+		}
+
+		function resetAllIndex(reindex) {
+			var msg = reindex ? "确定清除全部向量并重新索引？耗时较长。" : "确定清除全部向量索引？";
+			$.modal.confirm(msg, function() {
+				$.modal.loading(reindex ? "正在重索引..." : "正在清除...");
+				$.ajax({
+					url: prefix + "/index/reset-all",
+					type: "post",
+					data: { reindex: reindex },
+					dataType: "json",
+					success: function(result) {
+						$.modal.closeLoading();
+						if (result.code == web_status.SUCCESS) {
+							$.modal.msgSuccess(result.msg);
+							loadIndexStatus();
+						} else {
+							$.modal.alertError(result.msg);
+						}
+					},
+					error: function(xhr) {
+						$.modal.closeLoading();
+						$.modal.alertError("操作失败：" + (xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : ""));
+					}
+				});
+			});
+		}
+
+		function fullReloadRepos() {
+			$.modal.confirm("确定执行全量重载（同步 + 清除 + 重索引）？耗时较长。", function() {
+				$.modal.loading("正在全量重载...");
+				$.ajax({
+					url: prefix + "/full-reload",
+					type: "post",
+					dataType: "json",
+					success: function(result) {
+						$.modal.closeLoading();
+						if (result.code == web_status.SUCCESS) {
+							$.modal.msgSuccess(result.msg);
+							$.table.refresh();
+							loadIndexStatus();
+						} else {
+							$.modal.alertError(result.msg);
+						}
+					},
+					error: function(xhr) {
+						$.modal.closeLoading();
+						$.modal.alertError("全量重载失败：" + (xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : ""));
+					}
+				});
+			});
+		}
+	</script>
+</body>
+</html>

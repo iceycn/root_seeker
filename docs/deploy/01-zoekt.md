@@ -2,6 +2,8 @@
 
 Zoekt 用于代码词法/符号/正则检索，RootSeeker 通过 HTTP 调用其 `/api/search` 接口。
 
+> **安装指南**：若需从零安装 Zoekt，见 [依赖组件安装指南](../INSTALL_DEPENDENCIES.md#三zoekt-安装)。
+
 ## 1. 适用环境
 
 - 内网 Linux 服务器（或 macOS 开发机）

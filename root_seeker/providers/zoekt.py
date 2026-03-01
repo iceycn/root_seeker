@@ -93,6 +93,29 @@ class ZoektClient:
             logger.error(f"[ZoektClient] 搜索失败：{e}", exc_info=True)
             raise
 
+    async def list_indexed_repos(self) -> set[str] | None:
+        """
+        获取已索引的仓库名列表。部分 Zoekt 版本支持 /api/list，不支持时返回 None。
+        """
+        try:
+            url = f"{self._cfg.api_base_url.rstrip('/')}/api/list"
+            resp = await self._client.get(url)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            repos = data.get("Repos") or data.get("repos") or []
+            names = set()
+            for r in repos:
+                if isinstance(r, dict):
+                    n = r.get("Name") or r.get("name") or r.get("Repository") or ""
+                    if n:
+                        names.add(str(n))
+                elif isinstance(r, str):
+                    names.add(r)
+            return names
+        except Exception:
+            return None
+
     async def aclose(self) -> None:
         await self._client.aclose()
 

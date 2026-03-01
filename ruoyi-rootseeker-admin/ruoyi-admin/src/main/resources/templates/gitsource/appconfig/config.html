@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh" xmlns:th="http://www.thymeleaf.org">
+<head>
+	<th:block th:include="include :: header('AI 应用配置')" />
+	<style>
+		.config-tabs { margin-bottom: 15px; }
+		.config-tab-content { display: none; }
+		.config-tab-content.active { display: block; }
+		.json-editor { font-family: monospace; font-size: 13px; min-height: 320px; }
+		.help-inline { color: #999; font-size: 12px; }
+	</style>
+</head>
+<body class="white-bg">
+    <div class="wrapper wrapper-content animated fadeInRight ibox-content">
+        <div class="form-horizontal m">
+            <div class="form-group">
+                <label class="col-sm-2 control-label">配置来源：</label>
+                <div class="col-sm-4">
+                    <select id="configSource" class="form-control" onchange="saveSource()">
+                        <option value="file">配置文件（config.yaml）</option>
+                        <option value="database">数据库（app_config 表）</option>
+                    </select>
+                </div>
+                <div class="col-sm-6">
+                    <span class="help-inline">file：从 config.yaml 读取；database：从 RootSeeker 数据库 app_config 表读取。需在 RootSeeker 中配置 config_db。</span>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-sm-2 control-label">配置分类：</label>
+                <div class="col-sm-10">
+                    <ul class="nav nav-tabs config-tabs" id="categoryTabs">
+                        <li class="active"><a href="#llm" data-toggle="tab">LLM</a></li>
+                        <li><a href="#embedding" data-toggle="tab">Embedding</a></li>
+                        <li><a href="#qdrant" data-toggle="tab">Qdrant</a></li>
+                        <li><a href="#aliyun_sls" data-toggle="tab">阿里云 SLS</a></li>
+                        <li><a href="#wecom" data-toggle="tab">企微</a></li>
+                        <li><a href="#dingtalk" data-toggle="tab">钉钉</a></li>
+                        <li><a href="#zoekt" data-toggle="tab">Zoekt</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="tab-content">
+                <div id="llm" class="tab-pane config-tab-content active">
+                    <div class="form-group">
+                        <label class="col-sm-2 control-label">LLM 配置（JSON）：</label>
+                        <div class="col-sm-10">
+                            <textarea id="json-llm" class="form-control json-editor" placeholder='{"kind":"deepseek","base_url":"https://...","api_key":"sk-...","model":"deepseek-chat"}'></textarea>
+                            <span class="help-inline">kind: deepseek|doubao；base_url、api_key、model 必填</span>
+                        </div>
+                    </div>
+                </div>
+                <div id="embedding" class="tab-pane config-tab-content">
+                    <div class="form-group">
+                        <label class="col-sm-2 control-label">Embedding 配置（JSON）：</label>
+                        <div class="col-sm-10">
+                            <textarea id="json-embedding" class="form-control json-editor" placeholder='{"provider":"fastembed","model":"BAAI/bge-small-zh-v1.5"}'></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div id="qdrant" class="tab-pane config-tab-content">
+                    <div class="form-group">
+                        <label class="col-sm-2 control-label">Qdrant 配置（JSON）：</label>
+                        <div class="col-sm-10">
+                            <textarea id="json-qdrant" class="form-control json-editor" placeholder='{"url":"http://localhost:6333","collection_name":"root_seeker"}'></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div id="aliyun_sls" class="tab-pane config-tab-content">
+                    <div class="form-group">
+                        <label class="col-sm-2 control-label">阿里云 SLS 配置（JSON）：</label>
+                        <div class="col-sm-10">
+                            <textarea id="json-aliyun_sls" class="form-control json-editor" placeholder='{"endpoint":"...","access_key_id":"...","access_key_secret":"...","project":"...","logstore":"..."}'></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div id="wecom" class="tab-pane config-tab-content">
+                    <div class="form-group">
+                        <label class="col-sm-2 control-label">企微配置（JSON）：</label>
+                        <div class="col-sm-10">
+                            <textarea id="json-wecom" class="form-control json-editor" placeholder='{"webhook_url":"https://...","secret":"","security_mode":"ip"}'></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div id="dingtalk" class="tab-pane config-tab-content">
+                    <div class="form-group">
+                        <label class="col-sm-2 control-label">钉钉配置（JSON）：</label>
+                        <div class="col-sm-10">
+                            <textarea id="json-dingtalk" class="form-control json-editor" placeholder='{"webhook_url":"https://...","secret":"","security_mode":"sign"}'></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div id="zoekt" class="tab-pane config-tab-content">
+                    <div class="form-group">
+                        <label class="col-sm-2 control-label">Zoekt 配置（JSON）：</label>
+                        <div class="col-sm-10">
+                            <textarea id="json-zoekt" class="form-control json-editor" placeholder='{"api_base_url":"http://localhost:6070"}'></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="form-group">
+                <div class="col-sm-offset-2 col-sm-10">
+                    <button type="button" class="btn btn-primary" onclick="saveCurrentCategory()">保存当前分类</button>
+                    <button type="button" class="btn btn-default" onclick="loadAll()">刷新</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <th:block th:include="include :: footer" />
+    <script type="text/javascript">
+        var prefix = ctx + "gitsource/appconfig";
+        var categoryMap = {
+            "llm": "json-llm",
+            "embedding": "json-embedding",
+            "qdrant": "json-qdrant",
+            "aliyun_sls": "json-aliyun_sls",
+            "wecom": "json-wecom",
+            "dingtalk": "json-dingtalk",
+            "zoekt": "json-zoekt"
+        };
+
+        function getCurrentCategory() {
+            var active = $(".config-tabs li.active a").attr("href");
+            return active ? active.substring(1) : "llm";
+        }
+
+        function loadAll() {
+            $.ajax({
+                url: prefix + "/list",
+                type: "post",
+                dataType: "json",
+                success: function(result) {
+                    if (result.code == web_status.SUCCESS && result.data) {
+                        var cfg = result.data.config || {};
+                        var cat;
+                        for (cat in categoryMap) {
+                            var val = cfg[cat];
+                            var id = categoryMap[cat];
+                            $("#" + id).val(val ? (typeof val === "string" ? val : JSON.stringify(val, null, 2)) : "");
+                        }
+                        $.modal.msgSuccess("加载成功");
+                    } else {
+                        $.modal.alertError(result.msg || "加载失败");
+                    }
+                },
+                error: function(xhr) {
+                    $.modal.alertError("加载失败，请确认 RootSeeker 已配置 config_db 且服务可访问");
+                }
+            });
+            $.ajax({
+                url: prefix + "/source",
+                type: "post",
+                dataType: "json",
+                success: function(result) {
+                    if (result.code == web_status.SUCCESS && result.data) {
+                        var src = result.data.config_source || "file";
+                        $("#configSource").val(src);
+                    }
+                }
+            });
+        }
+
+        function saveSource() {
+            var src = $("#configSource").val();
+            $.ajax({
+                url: prefix + "/source/save",
+                type: "post",
+                data: { configSource: src },
+                dataType: "json",
+                success: function(result) {
+                    if (result.code == web_status.SUCCESS) {
+                        $.modal.msgSuccess("配置来源已切换为 " + src);
+                    } else {
+                        $.modal.alertError(result.msg);
+                    }
+                }
+            });
+        }
+
+        function saveCurrentCategory() {
+            var cat = getCurrentCategory();
+            var id = categoryMap[cat];
+            var raw = $("#" + id).val();
+            var config = {};
+            if (raw && raw.trim()) {
+                try {
+                    config = JSON.parse(raw);
+                } catch (e) {
+                    $.modal.alertError("JSON 格式错误");
+
+                    return;
+                }
+            }
+            $.ajax({
+                url: prefix + "/category/save?category=" + encodeURIComponent(cat),
+                type: "post",
+                contentType: "application/json",
+                data: JSON.stringify(config),
+                dataType: "json",
+                success: function(result) {
+                    if (result.code == web_status.SUCCESS) {
+                        $.modal.msgSuccess("保存成功");
+                    } else {
+                        $.modal.alertError(result.msg);
+                    }
+                }
+            });
+        }
+
+        $(function() {
+            $('a[data-toggle="tab"]').on('shown.bs.tab', function(e) {
+                $(e.target).closest("li").addClass("active").siblings().removeClass("active");
+            });
+            loadAll();
+        });
+    </script>
+</body>
+</html>

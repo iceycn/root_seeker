@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
 from pydantic import BaseModel, Field, HttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -90,6 +89,16 @@ class QdrantStoreConfig(BaseModel):
     collection: str = "code_chunks"
 
 
+class GitSourceConfig(BaseModel):
+    """Git 仓库发现配置：根据域名+账号密码获取仓库列表，支持文件或 MySQL 存储。"""
+    enabled: bool = Field(default=True, description="是否启用")
+    repos_base_dir: str = Field(default="data/repos_from_git", description="仓库克隆根目录")
+    storage: dict[str, Any] = Field(
+        default_factory=lambda: {"type": "file", "file_path": "data/git_source.json"},
+        description="存储配置：type=file 时需 file_path；type=mysql 时需 host,port,user,password,database",
+    )
+
+
 class AppConfig(BaseModel):
     data_dir: str = "data"
     audit_dir: str = "data/audit"
@@ -124,6 +133,7 @@ class AppConfig(BaseModel):
     llm: LlmProviderConfig | None = None
     embedding: EmbeddingConfig | None = None
     qdrant: QdrantStoreConfig | None = None
+    git_source: GitSourceConfig | None = None
 
     evidence_level: str = Field(default="L3", description="L1|L2|L3")
     max_evidence_files: int = 12
@@ -155,6 +165,7 @@ class AppConfig(BaseModel):
     auto_index_after_sync: bool = Field(default=True, description="仓库同步完成后是否自动触发向量索引更新（仅对有变更的仓库），默认 true")
     auto_index_interval_seconds: int = Field(default=7200, description="向量索引更新间隔（秒），默认2小时（7200秒），仅在 auto_index_after_sync=false 时生效")
     auto_sync_concurrency: int = Field(default=8, description="仓库同步并发数，默认8")
+    auto_index_concurrency: int = Field(default=1, description="向量索引并发数，默认1（按仓库排队加载，避免一次性加载过多）")
 
 
 @dataclass(frozen=True)
@@ -163,19 +174,18 @@ class LoadedConfig:
     app: AppConfig
 
 
-def _read_yaml(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        raise FileNotFoundError(f"Config file not found: {path}")
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if raw is None:
-        return {}
-    if not isinstance(raw, dict):
-        raise ValueError("Config file must contain a YAML mapping at the root.")
-    return raw
-
-
 def load_config() -> LoadedConfig:
+    """通过 ConfigReader 读取配置，支持 file / database 双模式。"""
+    from root_seeker.config_reader import ConfigReader
+
     settings = Settings()
-    raw = _read_yaml(settings.config_path)
+    raw = ConfigReader(config_path=settings.config_path).read()
     app = AppConfig.model_validate(raw)
     return LoadedConfig(settings=settings, app=app)
+
+
+def get_config_db(raw: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """获取数据库连接配置。若 raw 为 None 则从 config_path 读取。供 API 等使用。"""
+    from root_seeker.config_reader import get_config_db as _get
+
+    return _get(raw)

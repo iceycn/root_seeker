@@ -1,0 +1,26 @@
+# Git 与 IDE
+.git
+.idea
+.vscode
+*.pyc
+__pycache__
+.pytest_cache
+.ruff_cache
+
+# 运行时与数据
+data/
+logs/
+tools/
+*.log
+
+# 其他项目
+ruoyi-rootseeker-admin
+
+# Docker 自身
+root_seeker_docker
+Dockerfile
+.dockerignore
+
+# 文档与测试（可选，减小镜像）
+# docs/
+# tests/

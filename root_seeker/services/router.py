@@ -58,6 +58,10 @@ class ServiceRouter:
     def __init__(self, catalog: RepoCatalog):
         self._catalog = catalog
 
+    def refresh_catalog(self, repos: list[RepoConfig]) -> None:
+        """刷新仓库目录，供配置变更通知后使用。"""
+        self._catalog = RepoCatalog(repos=repos)
+
     def route(self, service_name: str) -> list[CandidateRepo]:
         # 1. 精确匹配（含 repo_aliases）
         for candidate in _service_name_candidates(service_name):

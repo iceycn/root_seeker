@@ -4,6 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Callable | None
 
 from root_seeker.domain import NormalizedErrorEvent
 from root_seeker.events import AnalysisCompletedEvent, AnalysisEventBus
@@ -30,6 +31,7 @@ class JobQueue:
         event_bus: AnalysisEventBus,
         workers: int,
         timeout_seconds: int = 160,
+        db_status_sync: Callable[[AnalysisStatus, str | None], None] | None = None,
     ):
         self._queue: asyncio.Queue[Job] = asyncio.Queue()
         self._analyzer = analyzer
@@ -38,11 +40,21 @@ class JobQueue:
         self._event_bus = event_bus
         self._workers = workers
         self._timeout_seconds = timeout_seconds
+        self._db_status_sync = db_status_sync
         self._tasks: list[asyncio.Task] = []
+
+    def _sync_to_db(self, st: AnalysisStatus, service_name: str | None) -> None:
+        if self._db_status_sync:
+            try:
+                self._db_status_sync(st, service_name)
+            except Exception as e:
+                logger.warning(f"[JobQueue] 数据库状态同步失败: {e}")
 
     def enqueue(self, job: Job) -> None:
         logger.info(f"[JobQueue] 任务入队，analysis_id={job.analysis_id}, service={job.event.service_name}")
-        self._status_store.save(AnalysisStatus(analysis_id=job.analysis_id, status="pending"))
+        st = AnalysisStatus(analysis_id=job.analysis_id, status="pending")
+        self._status_store.save(st)
+        self._sync_to_db(st, job.event.service_name)
         self._queue.put_nowait(job)
 
     async def start(self) -> None:
@@ -69,6 +81,7 @@ class JobQueue:
             )
             st = st.model_copy(update={"status": "running"})
             self._status_store.save(st)
+            self._sync_to_db(st, job.event.service_name)
             try:
                 await asyncio.wait_for(
                     self._analyzer.analyze(job.event, analysis_id=job.analysis_id),
@@ -89,6 +102,7 @@ class JobQueue:
                 logger.error(f"[JobQueue] Worker {worker_id} 任务失败，analysis_id={job.analysis_id}, 错误={e}", exc_info=True)
             st = st.model_copy(update={"updated_at": datetime.now(tz=timezone.utc)})
             self._status_store.save(st)
+            self._sync_to_db(st, job.event.service_name)
 
             # 触发任务完成事件，payload 与 GET /analysis/{id} 返回值一致（JSON 可序列化）
             payload: dict

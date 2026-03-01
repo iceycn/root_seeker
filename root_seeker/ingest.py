@@ -38,6 +38,42 @@ def parse_sls_record(raw: dict[str, Any]) -> IngestEvent:
     )
 
 
+def parse_single_log(raw: dict[str, Any]) -> IngestEvent | None:
+    """解析单条日志为 IngestEvent，支持标准格式与 SLS 格式。"""
+    if not isinstance(raw, dict):
+        return None
+    if "service_name" in raw and "error_log" in raw:
+        try:
+            return IngestEvent(
+                service_name=str(raw["service_name"]),
+                error_log=str(raw["error_log"]),
+                query_key=str(raw.get("query_key", "default_error_context")),
+                timestamp=_parse_timestamp(raw.get("timestamp")),
+                tags=dict(raw.get("tags", {})) if isinstance(raw.get("tags"), dict) else {},
+            )
+        except Exception:
+            return None
+    if "content" in raw or "__time__" in raw:
+        return parse_sls_record(raw)
+    return None
+
+
+def parse_log_list(body: list[dict[str, Any]] | dict[str, Any]) -> list[IngestEvent]:
+    """解析日志列表为 IngestEvent 列表，支持标准格式与 SLS 格式。"""
+    if isinstance(body, dict):
+        body = [body]
+    if not isinstance(body, list):
+        return []
+    events: list[IngestEvent] = []
+    for item in body:
+        if not isinstance(item, dict):
+            continue
+        ev = parse_single_log(item)
+        if ev is not None:
+            events.append(ev)
+    return events
+
+
 def parse_ingest_body(body: dict[str, Any] | list) -> IngestEvent | None:
     """
     解析请求体为 IngestEvent。
@@ -47,22 +83,7 @@ def parse_ingest_body(body: dict[str, Any] | list) -> IngestEvent | None:
     """
     if isinstance(body, list) and body:
         body = body[0]
-    if not isinstance(body, dict):
-        return None
-    if "service_name" in body and "error_log" in body:
-        try:
-            return IngestEvent(
-                service_name=str(body["service_name"]),
-                error_log=str(body["error_log"]),
-                query_key=str(body.get("query_key", "default_error_context")),
-                timestamp=_parse_timestamp(body.get("timestamp")),
-                tags=dict(body.get("tags", {})) if isinstance(body.get("tags"), dict) else {},
-            )
-        except Exception:
-            return None
-    if "content" in body or "__time__" in body:
-        return parse_sls_record(body)
-    return None
+    return parse_single_log(body) if isinstance(body, dict) else None
 
 
 def _parse_timestamp(v: Any) -> datetime | None:

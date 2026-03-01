@@ -23,18 +23,23 @@
 |------|------|
 | [docs/PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) | 项目结构说明与检查结论 |
 | [docs/OPTIMIZATION_CHECKLIST.md](OPTIMIZATION_CHECKLIST.md) | 当前优化建议清单（P0～P3，已标记完成项） |
+| [docs/GAP_ANALYSIS.md](GAP_ANALYSIS.md) | **漏洞与不足分析**：鉴权、敏感数据、输入校验、限流、功能缺陷等 |
 | [docs/IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) | **实现状态总结**：需求对照、P0/P1/P2/P3 完成情况、新增功能、配置项汇总 |
 | [docs/LLM_INTERACTION.md](LLM_INTERACTION.md) | **LLM 交互原理**：系统与大模型（DeepSeek/豆包）的交互流程、Prompt 构建、API 调用、错误处理详解 |
 | [docs/LLM_MULTI_TURN_OPTIMIZATION.md](LLM_MULTI_TURN_OPTIMIZATION.md) | **LLM 多轮对话优化方案**：参考 Cursor/Trae 的多轮对话模式，设计分阶段分析、Self-Refine 迭代优化等方案 |
 | [docs/LLM_MULTI_TURN_IMPLEMENTATION.md](LLM_MULTI_TURN_IMPLEMENTATION.md) | **LLM 多轮对话实现总结**：三套多轮对话机制的实现细节、使用方法、配置说明 |
 | [docs/LOG_CHAIN_ENRICHMENT.md](LOG_CHAIN_ENRICHMENT.md) | **日志链自动读取功能**：使用 LLM 智能提取 trace_id/request_id，自动查询调用链日志 |
 | [docs/CONFIG_CHECKLIST.md](CONFIG_CHECKLIST.md) | 配置缺项说明与填写方式 |
+| [docs/INSTALL_DEPENDENCIES.md](INSTALL_DEPENDENCIES.md) | **依赖组件安装指南**：Qdrant、Zoekt 等自行安装步骤（Docker/二进制/Go） |
 | [docs/deploy/00-overview.md](deploy/00-overview.md) | 部署总览与依赖关系 |
 | [docs/deploy/01-zoekt.md](deploy/01-zoekt.md) | Zoekt 傻瓜部署 |
 | [docs/deploy/02-qdrant.md](deploy/02-qdrant.md) | Qdrant 傻瓜部署 |
 | [docs/deploy/03-RootSeeker.md](deploy/03-RootSeeker.md) | RootSeeker 应用傻瓜部署 |
 | [docs/deploy/04-aliyun-sls.md](deploy/04-aliyun-sls.md) | 阿里云 SLS 配置与打通 |
 | [docs/deploy/05-notifiers.md](deploy/05-notifiers.md) | 企业微信 / 钉钉配置 |
+| [docs/WEBADMIN_ANALYSIS.md](WEBADMIN_ANALYSIS.md) | **WebAdmin 方案分析**：FastAPI-Amis-Admin、SQLAdmin 等 Python 方案对比 |
+| [docs/WEBADMIN_RUOYI_ARCHITECTURE.md](WEBADMIN_RUOYI_ARCHITECTURE.md) | **若依异构架构**：新开独立项目，RuoYi + RootSeeker 共享 MySQL，仓库管理 |
+| [root_seeker_docker/README.md](../root_seeker_docker/README.md) | **Docker 部署**：Qdrant + RootSeeker 容器化，无 Docker 时用脚本一键启动 |
 
 ## 4. 文档是否已整合好？
 

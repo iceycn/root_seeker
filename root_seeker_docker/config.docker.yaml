@@ -1,0 +1,8 @@
+# Docker 环境下的 config 覆盖片段
+# 用法：将 qdrant.url 等合并到主 config.yaml，或作为覆盖
+# 在 docker-compose 中可挂载此文件并合并，此处仅作参考
+
+qdrant:
+  url: "http://qdrant:6333"   # 容器内使用服务名
+  api_key: null
+  collection: "code_chunks"
