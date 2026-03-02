@@ -42,7 +42,7 @@ services:
     volumes:
       - zoekt_index:/data/index
       - ../data:/repos:ro
-    # 索引目录初始为空；同步仓库后可 exec 执行 zoekt-index -index /data/index -repo_name xxx /repos/repos/xxx 建索引
+    # 索引目录初始为空；Admin 触发「Zoekt 索引」时 RootSeeker 会调用 zoekt-index 写入共享索引目录
 
   root-seeker:
     build:
@@ -53,6 +53,7 @@ services:
     volumes:
       - ../config.yaml:/app/config.yaml:ro
       - ../data:/app/data
+      - zoekt_index:/app/data/zoekt/index
     environment:
       - ROOT_SEEKER_CONFIG_PATH=/app/config.yaml
     depends_on:

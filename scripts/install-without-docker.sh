@@ -25,7 +25,7 @@ go version
 
 echo ""
 echo "=== 3. Zoekt（词法检索）==="
-# 使用 google/zoekt（与 sourcegraph/zoekt API 兼容）
+# 使用 google/zoekt（API 兼容）
 go install github.com/google/zoekt/cmd/zoekt-index@latest
 go install github.com/google/zoekt/cmd/zoekt-webserver@latest
 echo "Zoekt 已安装到: $(go env GOPATH)/bin"

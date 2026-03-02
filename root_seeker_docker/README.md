@@ -62,10 +62,7 @@ docker compose down
 - **Demo 仓库**：预置 `psf/requests`，可在 Admin「Git 源码管理」中同步并建索引
 - **config.docker.yaml** 合并后会自动设置：`config_source`、`qdrant`、`zoekt`、`config_db`、`git_source`（连接 MySQL 容器）
 - **repos[].local_dir**：合并时自动设为 `/app/data/repos/<service_name>`
-- **Zoekt 索引**：初始为空。同步 Demo 仓库后，可 exec 建索引：
-  ```bash
-  docker compose exec zoekt zoekt-index -index /data/index -repo_name requests /repos/repos_from_git/psf/requests
-  ```
+- **Zoekt 索引**：初始为空。同步仓库后，在 Admin「Git 源码管理」中点击对应仓库的「Zoekt 索引」即可（RootSeeker 容器已内置 zoekt-index，索引写入与 zoekt-webserver 共享的目录）
 
 ## SQL 更新同步
 

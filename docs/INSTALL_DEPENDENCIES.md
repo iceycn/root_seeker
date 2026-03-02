@@ -101,13 +101,9 @@ Zoekt 无预编译二进制，需通过 **Go** 编译安装。
 ### 3.2 安装 Zoekt
 
 ```bash
-# 使用 Google 官方版本（API 兼容）
+# 使用 google/zoekt（API 兼容）
 go install github.com/google/zoekt/cmd/zoekt-index@latest
 go install github.com/google/zoekt/cmd/zoekt-webserver@latest
-
-# 或使用 Sourcegraph 维护版本（功能更多）
-# go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest
-# go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest
 ```
 
 安装后二进制位于 `$(go env GOPATH)/bin/`，需加入 PATH：

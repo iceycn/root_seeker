@@ -13,11 +13,9 @@ Zoekt 用于代码词法/符号/正则检索，RootSeeker 通过 HTTP 调用其 
 
 ```bash
 # 需要 Go 1.19+
+# 使用 google/zoekt（API 兼容）
 go install github.com/google/zoekt/cmd/zoekt-index@latest
 go install github.com/google/zoekt/cmd/zoekt-webserver@latest
-# 或使用 Sourcegraph 维护的版本（API 兼容）：
-# go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest
-# go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest
 ```
 
 安装后得到：
@@ -97,4 +95,4 @@ zoekt:
 - 容器内提供 HTTP 接口，路径为 `/api/search`，请求体含 `Q`、`Opts`（及可选 `RepoIDs`）。
 - 将索引目录挂载为持久化卷，并先在本机或其它容器内用 `zoekt-index` 生成索引，再启动 webserver 容器。
 
-具体镜像与启动命令可参考 [sourcegraph/zoekt](https://github.com/sourcegraph/zoekt) 或公司内已有 Zoekt 部署规范。
+具体镜像与启动命令可参考 [google/zoekt](https://github.com/google/zoekt) 或公司内已有 Zoekt 部署规范。

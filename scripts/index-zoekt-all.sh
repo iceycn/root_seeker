@@ -9,7 +9,7 @@ INDEX_DIR="${ZOOKT_INDEX_DIR:-$(pwd)/data/zoekt/index}"
 ZOOKT_INDEX="${ZOOKT_INDEX:-$(go env GOPATH 2>/dev/null)/bin/zoekt-index}"
 
 if [[ ! -x "$ZOOKT_INDEX" ]]; then
-  echo "zoekt-index 未找到，请先执行: go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest"
+  echo "zoekt-index 未找到，请先执行: go install github.com/google/zoekt/cmd/zoekt-index@latest"
   exit 1
 fi
 

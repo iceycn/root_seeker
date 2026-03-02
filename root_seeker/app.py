@@ -319,7 +319,8 @@ def create_app() -> FastAPI:
 
     index_semaphore = asyncio.Semaphore(cfg.auto_index_concurrency)
     indexing_qdrant: set[str] = set()  # 正在索引的 service_name，用于 GET /index/status
-    indexing_zoekt: set[str] = set()   # Zoekt 索引由外部脚本执行，当前未集成
+    indexing_zoekt: set[str] = set()   # 正在建 Zoekt 索引的 service_name
+    recently_indexed_zoekt: set[str] = set()  # 近期成功索引的 service_name（/api/list 不可用时作为回退）
     periodic_task_service = PeriodicTaskService(
         cfg=PeriodicTaskConfig(
             periodic_tasks_enabled=cfg.periodic_tasks_enabled,
@@ -795,13 +796,17 @@ def create_app() -> FastAPI:
         """
         返回各仓库的 Qdrant 与 Zoekt 索引状态。
         每项含：service_name, qdrant_indexed, qdrant_indexing, qdrant_count, zoekt_indexed, zoekt_indexing。
+        使用 router catalog（notify 后已刷新），确保新启用的仓库能立即显示。
         """
         zoekt_repos: set[str] | None = None
         if zoekt is not None:
             zoekt_repos = await zoekt.list_indexed_repos()
         result: list[dict[str, Any]] = []
-        for repo in repos_for_sync:
+        current_repos = router._catalog.repos
+        for repo in current_repos:
             sn = repo.service_name
+            # Zoekt 索引的 repo 名可能为 service_name 或 local_dir 最后一段
+            zoekt_name_candidates = {sn, Path(repo.local_dir).name}
             qdrant_count = 0
             if qstore is not None:
                 qdrant_count = await asyncio.to_thread(
@@ -812,7 +817,12 @@ def create_app() -> FastAPI:
                 "qdrant_indexed": qdrant_count > 0,
                 "qdrant_indexing": sn in indexing_qdrant,
                 "qdrant_count": qdrant_count,
-                "zoekt_indexed": (sn in zoekt_repos) if zoekt_repos is not None else None,
+                "zoekt_indexed": (
+                    bool(zoekt_name_candidates & (zoekt_repos or set()))
+                    or (sn in recently_indexed_zoekt)
+                    if (zoekt_repos is not None or recently_indexed_zoekt)
+                    else None
+                ),
                 "zoekt_indexing": sn in indexing_zoekt,
             }
             result.append(item)
@@ -855,6 +865,82 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=f"index_repo failed: {e!s}")
         finally:
             indexing_qdrant.discard(service_name)
+
+    @app.post("/index/zoekt/{service_name}")
+    async def index_zoekt_repo(
+        service_name: str,
+        _: None = Depends(require_api_key),
+    ) -> dict[str, Any]:
+        """为指定仓库建 Zoekt 索引（运行 zoekt-index 子进程）。需安装 zoekt-index。"""
+        if not service_name or len(service_name) > 100 or not all(c.isalnum() or c in "-_./" for c in service_name):
+            raise HTTPException(status_code=400, detail="Invalid service_name format")
+        candidates = router.route(service_name)
+        if not candidates:
+            raise HTTPException(status_code=404, detail="service_name not mapped to any repo")
+        repo = candidates[0]
+        import shutil
+        import os
+        zoekt_index = shutil.which("zoekt-index")
+        if not zoekt_index:
+            gobin = os.environ.get("GOPATH", "")
+            if gobin:
+                cand = Path(gobin) / "bin" / "zoekt-index"
+                if cand.exists():
+                    zoekt_index = str(cand)
+            if not zoekt_index:
+                # 默认 GOPATH=~/go，nohup 启动时可能未继承 GOPATH
+                for base in (Path.home() / "go", Path("/usr/local/go")):
+                    cand = base / "bin" / "zoekt-index"
+                    if cand.exists():
+                        zoekt_index = str(cand)
+                        break
+            if not zoekt_index or not Path(zoekt_index).exists():
+                raise HTTPException(
+                    status_code=400,
+                    detail="zoekt-index 未找到，请执行: go install github.com/google/zoekt/cmd/zoekt-index@latest",
+                )
+        index_dir = data_dir / "zoekt" / "index"
+        index_dir.mkdir(parents=True, exist_ok=True)
+        indexing_zoekt.add(service_name)
+        tmpdir_cleanup: Path | None = None
+        try:
+            # google/zoekt 无 -repo_name，repo 名取自路径最后一段；用临时符号链接确保与 service_name 一致
+            index_target = Path(repo.local_dir).resolve()
+            if index_target.name != service_name:
+                import tempfile
+                import shutil
+                tmpdir_cleanup = Path(tempfile.mkdtemp(prefix="zoekt-index-"))
+                try:
+                    link_path = tmpdir_cleanup / service_name
+                    link_path.symlink_to(index_target)
+                    index_target = link_path
+                except OSError:
+                    shutil.rmtree(tmpdir_cleanup, ignore_errors=True)
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"无法创建符号链接以设置 repo 名，请确保 local_dir 最后一段为 {service_name!r}",
+                    )
+            proc = await asyncio.create_subprocess_exec(
+                zoekt_index,
+                "-index", str(index_dir),
+                str(index_target),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+            if proc.returncode != 0:
+                err = (stderr or stdout or b"").decode("utf-8", errors="replace").strip()
+                raise HTTPException(status_code=500, detail=f"zoekt-index failed: {err}")
+            app_logger.info(f"[App] Zoekt 索引完成，service={service_name}")
+            recently_indexed_zoekt.add(service_name)
+            return {"status": "ok", "message": "Zoekt 索引完成。zoekt-webserver 会定期检测索引目录，新索引通常会自动生效；若未生效可尝试重启 zoekt-webserver"}
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=500, detail="zoekt-index 超时")
+        finally:
+            indexing_zoekt.discard(service_name)
+            if tmpdir_cleanup is not None and tmpdir_cleanup.exists():
+                import shutil
+                shutil.rmtree(tmpdir_cleanup, ignore_errors=True)
 
     @app.post("/index/repo/{service_name}/reset")
     async def reset_repo_index(
@@ -1050,6 +1136,15 @@ def create_app() -> FastAPI:
             "upstreams": [s.model_dump() for s in graph.upstream_of(service_name)],
             "downstreams": [s.model_dump() for s in graph.downstream_of(service_name)],
         }
+
+    @app.get("/repos/list")
+    async def list_repos(_: None = Depends(require_api_key)) -> dict[str, Any]:
+        """返回仓库列表（含 config.repos 与 git_source 已启用），供异常测试等项目选择。"""
+        out = [
+            {"service_name": r.service_name, "local_dir": r.local_dir}
+            for r in repos_for_sync
+        ]
+        return {"repos": out}
 
     @app.post("/repos/sync")
     async def sync_repos(

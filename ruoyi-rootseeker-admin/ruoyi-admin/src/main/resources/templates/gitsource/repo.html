@@ -2,6 +2,13 @@
 <html lang="zh" xmlns:th="http://www.thymeleaf.org" xmlns:shiro="http://www.pollix.at/thymeleaf/shiro">
 <head>
 	<th:block th:include="include :: header('Git 仓库管理')" />
+	<style>
+		.enabled-toggle { display: inline-block; cursor: pointer; text-decoration: none; }
+		.enabled-toggle .toggle-track { display: inline-block; position: relative; width: 40px; height: 20px; border-radius: 10px; background: #ebebeb; border: 2px solid #ebebeb; transition: all .15s ease; }
+		.enabled-toggle .toggle-thumb { position: absolute; left: 1px; top: 1px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.2); transition: all .15s ease; }
+		.enabled-toggle.on .toggle-track { background: #33cabb; border-color: #33cabb; }
+		.enabled-toggle.on .toggle-thumb { left: 24px; background: #fff; }
+	</style>
 </head>
 <body class="gray-bg">
     <div class="container-div">
@@ -28,7 +35,7 @@
 				<a class="btn btn-success" onclick="fetchRepos()" shiro:hasPermission="gitsource:repo:add">
 					<i class="fa fa-download"></i> 拉取仓库列表
 				</a>
-				<a class="btn btn-primary" onclick="syncRepos()" shiro:hasPermission="gitsource:repo:edit">
+				<a class="btn btn-primary" onclick="syncRepos()" shiro:hasPermission="gitsource:repo:edit" title="仅同步已启用的仓库到 RootSeeker">
 					<i class="fa fa-refresh"></i> 同步仓库
 				</a>
 				<a class="btn btn-danger" onclick="resetAllIndex(false)" shiro:hasPermission="gitsource:repo:edit">
@@ -49,6 +56,9 @@
 				<a class="btn btn-default" onclick="appConfigPage()" shiro:hasPermission="gitsource:config:view">
 					<i class="fa fa-database"></i> AI应用配置
 				</a>
+				<a class="btn btn-info" onclick="ingestTestPage()" shiro:hasPermission="gitsource:repo:view">
+					<i class="fa fa-bug"></i> 异常测试
+				</a>
 			</div>
 			<div class="col-sm-12 select-table table-striped">
 				<table id="bootstrap-table"></table>
@@ -65,13 +75,25 @@
 			return (row.fullName || '').replace(/\//g, '-');
 		}
 
-		function formatIndexStatus(status) {
-			if (!status) return '<span class="text-muted">—</span>';
-			var q = status.qdrant_indexed ? '<span class="badge badge-success">已索引</span>' : '<span class="badge badge-secondary">未索引</span>';
-			if (status.qdrant_indexing) q = '<span class="badge badge-warning">索引中</span>';
-			var z = status.zoekt_indexed === null ? '<span class="text-muted">—</span>' : (status.zoekt_indexed ? '<span class="badge badge-success">已索引</span>' : '<span class="badge badge-secondary">未索引</span>');
-			if (status.zoekt_indexing) z = '<span class="badge badge-warning">索引中</span>';
-			return 'Qdrant: ' + q + ' &nbsp; Zoekt: ' + z;
+		function escAttr(v) { return (v || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;'); }
+		function formatQdrantStatus(status, row) {
+			var sn = getServiceName(row);
+			var clickable = row.enabled == 1;
+			if (!status) return clickable ? '<a href="#" class="repo-action badge badge-secondary" data-action="index-qdrant" data-service="' + escAttr(sn) + '" style="cursor:pointer" title="点击开始索引">—</a>' : '<span class="text-muted">—</span>';
+			if (status.qdrant_indexing) return '<span class="badge badge-warning">索引中</span>';
+			if (status.qdrant_indexed) return '<span class="badge badge-success">已索引</span>';
+			var label = '未索引';
+			return clickable ? '<a href="#" class="repo-action badge badge-secondary" data-action="index-qdrant" data-service="' + escAttr(sn) + '" style="cursor:pointer" title="点击开始索引">' + label + '</a>' : '<span class="badge badge-secondary">' + label + '</span>';
+		}
+		function formatZoektStatus(status, row) {
+			var sn = getServiceName(row);
+			var clickable = row.enabled == 1;
+			var label = '未索引';
+			if (!status) return clickable ? '<a href="#" class="repo-action badge badge-secondary" data-action="index-zoekt" data-service="' + escAttr(sn) + '" style="cursor:pointer" title="点击开始索引">' + label + '</a>' : '<span class="text-muted">—</span>';
+			if (status.zoekt_indexing) return '<span class="badge badge-warning">索引中</span>';
+			if (status.zoekt_indexed === null) return clickable ? '<a href="#" class="repo-action badge badge-secondary" data-action="index-zoekt" data-service="' + escAttr(sn) + '" style="cursor:pointer" title="点击开始索引">' + label + '</a>' : '<span class="text-muted">—</span>';
+			if (status.zoekt_indexed) return '<span class="badge badge-success">已索引</span>';
+			return clickable ? '<a href="#" class="repo-action badge badge-secondary" data-action="index-zoekt" data-service="' + escAttr(sn) + '" style="cursor:pointer" title="点击开始索引">' + label + '</a>' : '<span class="badge badge-secondary">' + label + '</span>';
 		}
 
 		$(function() {
@@ -95,8 +117,14 @@
 				}, {
 					field: 'enabled',
 					title: '启用',
-					formatter: function(value) {
-						return value == 1 ? '<span class="badge badge-success">是</span>' : '<span class="badge badge-secondary">否</span>';
+					align: 'center',
+					escape: false,
+					formatter: function(value, row, index) {
+						var id = escAttr(row.id || '');
+						var isOn = value == 1;
+						var targetEnabled = isOn ? 0 : 1;
+						var title = isOn ? '点击禁用' : '点击启用';
+						return '<a href="#" class="repo-action enabled-toggle' + (isOn ? ' on' : '') + '" data-action="toggle-enabled" data-repo-id="' + id + '" data-enabled="' + targetEnabled + '" title="' + title + '"><span class="toggle-track"><span class="toggle-thumb"></span></span></a>';
 					}
 				}, {
 					field: 'localDir',
@@ -105,11 +133,20 @@
 						return $.table.tooltip(value, 20, "open");
 					}
 				}, {
-					title: 'Qdrant / Zoekt',
+					title: 'Qdrant',
 					align: 'center',
+					escape: false,
 					formatter: function(value, row, index) {
 						var sn = getServiceName(row);
-						return formatIndexStatus(indexStatusMap[sn]);
+						return formatQdrantStatus(indexStatusMap[sn], row);
+					}
+				}, {
+					title: 'Zoekt',
+					align: 'center',
+					escape: false,
+					formatter: function(value, row, index) {
+						var sn = getServiceName(row);
+						return formatZoektStatus(indexStatusMap[sn], row);
 					}
 				}, {
 					field: 'lastSyncAt',
@@ -117,20 +154,45 @@
 				}, {
 					title: '操作',
 					align: 'center',
+					escape: false,
 					formatter: function(value, row, index) {
 						var actions = [];
-						actions.push('<a class="btn btn-success btn-xs ' + editFlag + '" href="javascript:void(0)" onclick="$.modal.open(\'编辑仓库\', \'' + prefix + '/repo/edit?id=' + encodeURIComponent(row.id) + '\')"><i class="fa fa-edit"></i>编辑</a> ');
+						actions.push('<a href="#" class="btn btn-success btn-xs repo-action" data-action="edit" data-repo-id="' + escAttr(row.id || '') + '"><i class="fa fa-edit"></i>编辑</a> ');
 						if (editFlag && row.enabled == 1) {
 							var sn = getServiceName(row);
-							actions.push('<a class="btn btn-primary btn-xs" href="javascript:void(0)" onclick="indexRepo(\'' + sn.replace(/'/g, "\\'") + '\')"><i class="fa fa-database"></i>索引</a> ');
-							actions.push('<a class="btn btn-warning btn-xs" href="javascript:void(0)" onclick="resetRepoIndex(\'' + sn.replace(/'/g, "\\'") + '\')"><i class="fa fa-refresh"></i>重置</a> ');
-							actions.push('<a class="btn btn-danger btn-xs" href="javascript:void(0)" onclick="clearRepoIndex(\'' + sn.replace(/'/g, "\\'") + '\')"><i class="fa fa-trash"></i>清除</a> ');
+							var snEsc = escAttr(sn);
+							actions.push('<a href="#" class="btn btn-primary btn-xs repo-action" data-action="index-qdrant" data-service="' + snEsc + '"><i class="fa fa-database"></i>索引</a> ');
+							actions.push('<a href="#" class="btn btn-warning btn-xs repo-action" data-action="reset-index" data-service="' + snEsc + '"><i class="fa fa-refresh"></i>重置</a> ');
+							actions.push('<a href="#" class="btn btn-danger btn-xs repo-action" data-action="clear-index" data-service="' + snEsc + '"><i class="fa fa-trash"></i>清除</a> ');
 						}
 						return actions.join('');
 					}
 				}]
 			};
 			$.table.init(options);
+			// 事件委托：表格内链接在 iframe 中需用委托才能可靠响应点击
+			$(document).off('click.repoAction').on('click.repoAction', '.repo-action', function(e) {
+				e.preventDefault();
+				e.stopPropagation();
+				var $el = $(this);
+				var action = $el.data('action');
+				var service = $el.data('service');
+				var repoId = $el.data('repo-id');
+				var enabled = $el.data('enabled');
+				if (action === 'edit' && repoId) {
+					$.modal.open('编辑仓库', prefix + '/repo/edit?id=' + encodeURIComponent(repoId));
+				} else if (action === 'toggle-enabled' && repoId != null && enabled != null) {
+					toggleEnabledById(repoId, parseInt(enabled, 10));
+				} else if (action === 'index-qdrant' && service) {
+					indexRepo(service);
+				} else if (action === 'index-zoekt' && service) {
+					indexZoektRepo(service);
+				} else if (action === 'reset-index' && service) {
+					resetRepoIndex(service);
+				} else if (action === 'clear-index' && service) {
+					clearRepoIndex(service);
+				}
+			});
 		});
 
 		function loadIndexStatus() {
@@ -170,6 +232,32 @@
 			$.modal.openTab("AI应用配置", url);
 		}
 
+		function ingestTestPage() {
+			var url = ctx + "gitsource/ingestTest";
+			$.modal.openTab("异常测试", url);
+		}
+
+		function toggleEnabledById(id, enabled) {
+			$.ajax({
+				url: prefix + "/repo/toggleEnabled",
+				type: "post",
+				data: { id: id, enabled: enabled },
+				dataType: "json",
+				success: function(result) {
+					if (result.code == web_status.SUCCESS) {
+						$.modal.msgSuccess(enabled ? "已启用，已同步到 RootSeeker" : "已禁用，已从 RootSeeker 移除");
+						$.table.refresh();
+						loadIndexStatus();
+					} else {
+						$.modal.alertError(result.msg);
+					}
+				},
+				error: function(xhr) {
+					$.modal.alertError("操作失败：" + (xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : ""));
+				}
+			});
+		}
+
 		function syncRepos() {
 			$.modal.loading("正在同步...");
 			$.ajax({
@@ -189,6 +277,29 @@
 				error: function() {
 					$.modal.closeLoading();
 					$.modal.alertError("同步失败，请确保 RootSeeker 服务已启动且 api_key 已配置");
+				}
+			});
+		}
+
+		function indexZoektRepo(serviceName) {
+			$.modal.loading("正在建 Zoekt 索引...");
+			$.ajax({
+				url: prefix + "/index/zoekt",
+				type: "post",
+				data: { serviceName: serviceName },
+				dataType: "json",
+				success: function(result) {
+					$.modal.closeLoading();
+					if (result.code == web_status.SUCCESS) {
+						$.modal.msgSuccess(result.msg);
+						loadIndexStatus();
+					} else {
+						$.modal.alertError(result.msg);
+					}
+				},
+				error: function(xhr) {
+					$.modal.closeLoading();
+					$.modal.alertError("Zoekt 索引失败：" + (xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : "请检查 RootSeeker 服务及 zoekt-index 是否已安装"));
 				}
 			});
 		}

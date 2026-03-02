@@ -7,9 +7,9 @@ FROM golang:1.22-alpine AS builder
 ENV GOPROXY=https://goproxy.cn,direct
 ENV GOTOOLCHAIN=auto
 RUN apk add --no-cache git
-# 使用 sourcegraph/zoekt（GOTOOLCHAIN=auto 可自动下载所需 Go 版本）
-RUN go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest
-RUN go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest
+# 使用 google/zoekt（GOTOOLCHAIN=auto 可自动下载所需 Go 版本）
+RUN go install github.com/google/zoekt/cmd/zoekt-webserver@latest
+RUN go install github.com/google/zoekt/cmd/zoekt-index@latest
 
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates
