@@ -1,8 +1,7 @@
 # RootSeeker Docker 镜像（不包含 Qdrant/Zoekt/Admin，需配合 docker-compose）
 # 含 zoekt-index，供 POST /index/zoekt/{service_name} 建索引
 FROM golang:1.22-alpine AS zoekt-builder
-ENV GOPROXY=https://goproxy.cn,direct
-RUN go install github.com/google/zoekt/cmd/zoekt-index@latest
+RUN export GOPROXY=https://goproxy.cn,direct GOTOOLCHAIN=auto; go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest
 
 FROM python:3.11-slim
 
@@ -17,7 +16,7 @@ COPY --from=zoekt-builder /go/bin/zoekt-index /usr/local/bin/
 
 # 安装依赖（.dockerignore 已排除无关文件）
 COPY . .
-RUN pip install --no-cache-dir -e ".[mysql]" && pip cache purge
+RUN pip install --no-cache-dir -e ".[mysql]" -i https://mirrors.aliyun.com/pypi/simple/ && pip cache purge
 
 # 默认配置（可挂载 config.yaml 覆盖）
 ENV ROOT_SEEKER_CONFIG_PATH=/app/config.yaml

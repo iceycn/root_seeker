@@ -4,13 +4,9 @@
 
 FROM golang:1.22-alpine AS builder
 # 国内网络：使用 Go 代理加速
-ENV GOPROXY=https://goproxy.cn,direct
-ENV GOTOOLCHAIN=auto
 RUN apk add --no-cache git
 # 使用 google/zoekt（GOTOOLCHAIN=auto 可自动下载所需 Go 版本）
-RUN go install github.com/google/zoekt/cmd/zoekt-webserver@latest
-RUN go install github.com/google/zoekt/cmd/zoekt-index@latest
-
+RUN export GOPROXY=https://goproxy.cn,direct GOTOOLCHAIN=auto; go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest && go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /go/bin/zoekt-webserver /usr/local/bin/
