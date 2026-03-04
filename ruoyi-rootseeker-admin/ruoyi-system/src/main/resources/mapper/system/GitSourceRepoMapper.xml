@@ -28,7 +28,7 @@
             <if test="fullName != null and fullName != ''">and full_name like concat('%', #{fullName}, '%')</if>
             <if test="enabled != null">and enabled = #{enabled}</if>
         </where>
-        order by full_name
+        order by enabled desc, full_name asc
     </select>
 
     <select id="selectRepoById" resultMap="GitSourceRepoResult">

@@ -1,0 +1,142 @@
+# 事件化流程文档
+
+## 一、事件总览
+
+| 事件 | 说明 | 触发方 | 接收方 |
+|------|------|--------|--------|
+| RequestSyncRepoEvent | 请求同步仓库（索引入队） | 接口、定时任务、RepoSyncCompletedBridge | QdrantIndexSyncReceiver、ZoektIndexSyncReceiver |
+| RequestRemoveRepoEvent | 请求移除索引（清除入队） | 接口、FullReload 接收器 | QdrantRemoveReceiver、ZoektRemoveReceiver |
+| RequestResyncRepoEvent | 请求重新同步（入队单任务） | 接口 | ResyncReceiver |
+| ResyncCompletedEvent | 重新同步完成 | 队列 Worker（RESYNC 任务） | 日志 |
+| RequestResetAllEvent | 请求全量清除（可选重索引） | 接口 | ResetAllReceiver |
+| RequestFullReloadEvent | 请求全量重载（同步→移除→索引） | 接口 | FullReloadReceiver |
+| RepoSyncCompletedEvent | 仓库同步完成 | repo_mirror.sync | RepoSyncCompletedToRequestSyncBridge |
+| QdrantIndexCompletedEvent | Qdrant 索引完成 | 队列 Worker | 依赖图重建、日志 |
+| QdrantIndexRemovedEvent | Qdrant 索引已移除 | 队列 Worker | 依赖图重建、日志 |
+| ZoektIndexCompletedEvent | Zoekt 索引完成 | 队列 Worker | 日志 |
+| ZoektIndexRemovedEvent | Zoekt 索引已移除 | 队列 Worker | 日志 |
+| GraphRebuildQueuedEvent | 依赖图重建已入队 | GraphRebuildQueue | 日志 |
+| GraphRebuildCompletedEvent | 依赖图重建完成 | GraphRebuildQueue | 日志 |
+
+## 二、核心链路
+
+### 2.1 单仓库索引
+
+```
+RequestSyncRepoEvent
+  → QdrantIndexSyncReceiver / ZoektIndexSyncReceiver
+  → 入队（INDEX_QDRANT / INDEX_ZOEKT）
+  → Worker 执行
+  → QdrantIndexCompletedEvent / ZoektIndexCompletedEvent
+  → Qdrant 完成时触发 GraphRebuildQueuedEvent
+```
+
+### 2.2 仓库同步后索引
+
+```
+repo_mirror.sync 完成
+  → RepoSyncCompletedEvent
+  → RepoSyncCompletedToRequestSyncBridge
+  → RequestSyncRepoEvent
+  → 同 2.1
+```
+
+### 2.3 单仓库重新同步（单任务，同线程顺序执行）
+
+resync 与新建索引一样，作为**单个任务**入队。Worker 执行时在**同一线程**中依次完成：清除→索引→依赖图重建。
+
+```
+RequestResyncRepoEvent(service_name)
+  → ResyncReceiver
+  → 入队 RESYNC 任务（与 INDEX_QDRANT 同级）
+  → Worker 执行 RESYNC：步骤1 清除 → 步骤2 索引 → 步骤3 依赖图重建
+  → 发出 ResyncCompletedEvent
+```
+
+### 2.4 单仓库仅清除
+
+```
+RequestRemoveRepoEvent
+  → QdrantRemoveReceiver、ZoektRemoveReceiver
+  → 入队 REMOVE_QDRANT、REMOVE_ZOEKT
+  → QdrantIndexRemovedEvent
+  → 依赖图重建入队
+```
+
+### 2.5 全量清除
+
+```
+RequestResetAllEvent(reindex)
+  → ResetAllReceiver
+  → delete_collection()
+  → 若 reindex=true：为每个仓库发出 RequestSyncRepoEvent
+  → 同 2.1
+```
+
+### 2.6 全量重载
+
+```
+RequestFullReloadEvent(service_names)
+  → FullReloadReceiver（后台异步）
+  → 对每个仓库：repo_mirror.sync
+  → RepoSyncCompletedEvent
+  → RequestRemoveRepoEvent
+  → RequestSyncRepoEvent
+  → 队列处理移除与索引
+```
+
+## 三、API 与事件映射
+
+| API | 事件 |
+|-----|------|
+| POST /index/repo/{service_name} | RequestSyncRepoEvent |
+| POST /index/zoekt/{service_name} | RequestSyncRepoEvent(task_types=["zoekt"]) |
+| POST /index/repo/{service_name}/clear | RequestRemoveRepoEvent |
+| POST /index/repo/{service_name}/resync | RequestResyncRepoEvent |
+| POST /index/reset-all | RequestResetAllEvent |
+| POST /repos/full-reload | RequestFullReloadEvent |
+
+## 四、队列任务类型
+
+| 任务类型 | 说明 |
+|----------|------|
+| qdrant | Qdrant 向量索引 |
+| zoekt | Zoekt 代码搜索索引 |
+| remove_qdrant | 移除 Qdrant 向量 |
+| remove_zoekt | 移除 Zoekt 索引 |
+| resync | 重新同步（单任务内依次执行：清除→索引→依赖图重建） |
+
+## 五、依赖图重建触发条件
+
+- QdrantIndexCompletedEvent（索引完成）
+- QdrantIndexRemovedEvent（索引移除完成）
+- RESYNC 任务内联执行（清除→索引→依赖图重建，不经过 GraphRebuildQueue）
+
+依赖图重建通过 GraphRebuildQueue 串行执行，避免并发冲突。
+
+## 六、Admin 索引状态展示
+
+### 6.1 状态流转
+
+| 状态 | 说明 |
+|------|------|
+| 未索引 | 尚未建立索引 |
+| 索引中 | 正在建立索引 |
+| 已索引 | 索引已完成 |
+| 清理中 | 正在清除索引 |
+
+流转：`未索引 → 索引中 → 已索引`；`已索引 → 清理中 → 未索引`
+
+### 6.2 乐观更新
+
+Admin 发起索引/清除操作时，**先改本地 `repo_index_status` 状态，再调 RootSeeker 接口**。回调到达后更新为最终状态（已索引/未索引）。
+
+| 操作 | 先设状态 | 接口 |
+|------|----------|------|
+| 启用仓库 | 索引中 | syncSingleRepo |
+| 禁用仓库 | 清理中 | clearRepoIndex |
+| 索引 Qdrant | 索引中 | indexRepo |
+| 清除索引 | 清理中 | clearRepoIndex |
+| 重新同步 | 索引中 | resyncRepoIndex |
+
+详见 [callback-integration.md](callback-integration.md)。

@@ -38,6 +38,9 @@
 				<a class="btn btn-primary" onclick="syncRepos()" shiro:hasPermission="gitsource:repo:edit" title="仅同步已启用的仓库到 RootSeeker">
 					<i class="fa fa-refresh"></i> 同步仓库
 				</a>
+				<a class="btn btn-info" onclick="syncIndexStatus()" shiro:hasPermission="gitsource:repo:list" title="从 RootSeeker 查询当前索引状态并同步到本地">
+					<i class="fa fa-database"></i> 重新同步索引状态
+				</a>
 				<a class="btn btn-danger" onclick="resetAllIndex(false)" shiro:hasPermission="gitsource:repo:edit">
 					<i class="fa fa-trash"></i> 全量清除索引
 				</a>
@@ -59,9 +62,56 @@
 				<a class="btn btn-info" onclick="ingestTestPage()" shiro:hasPermission="gitsource:repo:view">
 					<i class="fa fa-bug"></i> 异常测试
 				</a>
+				<a class="btn btn-default" onclick="indexQueueModal()" shiro:hasPermission="gitsource:repo:list" title="查看索引队列与任务日志">
+					<i class="fa fa-list"></i> 索引队列
+				</a>
 			</div>
 			<div class="col-sm-12 select-table table-striped">
 				<table id="bootstrap-table"></table>
+			</div>
+		</div>
+	</div>
+	<!-- 单仓库日志弹窗 -->
+	<div id="repoLogModal" class="modal fade" tabindex="-1">
+		<div class="modal-dialog modal-lg">
+			<div class="modal-content">
+				<div class="modal-header">
+					<button type="button" class="close" data-dismiss="modal">&times;</button>
+					<h4 class="modal-title"><i class="fa fa-file-text-o"></i> 仓库日志 <small id="repoLogServiceName"></small></h4>
+				</div>
+				<div class="modal-body">
+					<p class="text-muted"><a href="javascript:void(0)" onclick="refreshRepoLog()"><i class="fa fa-refresh"></i> 刷新</a></p>
+					<table class="table table-bordered table-striped" id="repoLogTable">
+						<thead><tr><th>任务ID</th><th>类型</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+						<tbody id="repoLogTbody"></tbody>
+					</table>
+					<div id="repoJobLogPanel" style="display:none; margin-top:15px;">
+						<h5>任务日志</h5>
+						<pre id="repoJobLogContent" style="max-height:200px; overflow:auto; background:#f5f5f5; padding:10px; font-size:12px;"></pre>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+	<!-- 索引队列弹窗 -->
+	<div id="indexQueueModal" class="modal fade" tabindex="-1">
+		<div class="modal-dialog modal-lg">
+			<div class="modal-content">
+				<div class="modal-header">
+					<button type="button" class="close" data-dismiss="modal">&times;</button>
+					<h4 class="modal-title"><i class="fa fa-list"></i> 索引队列</h4>
+				</div>
+				<div class="modal-body">
+					<p class="text-muted">队列类型：<span id="queueType">-</span> &nbsp; <a href="javascript:void(0)" onclick="refreshQueue()"><i class="fa fa-refresh"></i> 刷新</a></p>
+					<table class="table table-bordered table-striped" id="queueTable">
+						<thead><tr><th>任务ID</th><th>仓库</th><th>类型</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+						<tbody id="queueTbody"></tbody>
+					</table>
+					<div id="jobLogPanel" style="display:none; margin-top:15px;">
+						<h5>任务日志 <small id="jobLogTitle"></small></h5>
+						<pre id="jobLogContent" style="max-height:200px; overflow:auto; background:#f5f5f5; padding:10px; font-size:12px;"></pre>
+					</div>
+				</div>
 			</div>
 		</div>
 	</div>
@@ -71,33 +121,41 @@
 		var prefix = ctx + "gitsource";
 		var indexStatusMap = {};
 
+		// 与后端 getIndexStatus 一致：取 fullPath/fullName 最后一段，再 replace("/","-")
 		function getServiceName(row) {
-			return (row.fullName || '').replace(/\//g, '-');
+			var path = (row.fullPath || row.fullName || '').trim();
+			if (!path) return '';
+			var lastPart = path.indexOf('/') >= 0 ? path.substring(path.lastIndexOf('/') + 1) : path;
+			return lastPart.replace(/\//g, '-');
+		}
+		function getStatusByServiceName(sn) {
+			if (!sn) return null;
+			var s = indexStatusMap[sn] || indexStatusMap[sn.replace(/_/g, '-')] || indexStatusMap[sn.replace(/-/g, '_')];
+			return s || null;
 		}
 
 		function escAttr(v) { return (v || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;'); }
+		// 单字段状态：未索引|索引中|已索引|清理中
 		function formatQdrantStatus(status, row) {
-			var sn = getServiceName(row);
-			var clickable = row.enabled == 1;
-			if (!status) return clickable ? '<a href="#" class="repo-action badge badge-secondary" data-action="index-qdrant" data-service="' + escAttr(sn) + '" style="cursor:pointer" title="点击开始索引">—</a>' : '<span class="text-muted">—</span>';
-			if (status.qdrant_indexing) return '<span class="badge badge-warning">索引中</span>';
-			if (status.qdrant_indexed) return '<span class="badge badge-success">已索引</span>';
-			var label = '未索引';
-			return clickable ? '<a href="#" class="repo-action badge badge-secondary" data-action="index-qdrant" data-service="' + escAttr(sn) + '" style="cursor:pointer" title="点击开始索引">' + label + '</a>' : '<span class="badge badge-secondary">' + label + '</span>';
+			if (!status) return '<span class="text-muted">—</span>';
+			var s = status.qdrant_status || '未索引';
+			if (s === '索引中' || s === '清理中') return '<span class="badge badge-warning"><i class="fa fa-spinner fa-spin"></i> ' + s + '</span>';
+			if (s === '已索引') return '<span class="badge badge-success">已索引</span>';
+			return '<span class="badge badge-secondary">未索引</span>';
 		}
 		function formatZoektStatus(status, row) {
-			var sn = getServiceName(row);
-			var clickable = row.enabled == 1;
-			var label = '未索引';
-			if (!status) return clickable ? '<a href="#" class="repo-action badge badge-secondary" data-action="index-zoekt" data-service="' + escAttr(sn) + '" style="cursor:pointer" title="点击开始索引">' + label + '</a>' : '<span class="text-muted">—</span>';
-			if (status.zoekt_indexing) return '<span class="badge badge-warning">索引中</span>';
-			if (status.zoekt_indexed === null) return clickable ? '<a href="#" class="repo-action badge badge-secondary" data-action="index-zoekt" data-service="' + escAttr(sn) + '" style="cursor:pointer" title="点击开始索引">' + label + '</a>' : '<span class="text-muted">—</span>';
-			if (status.zoekt_indexed) return '<span class="badge badge-success">已索引</span>';
-			return clickable ? '<a href="#" class="repo-action badge badge-secondary" data-action="index-zoekt" data-service="' + escAttr(sn) + '" style="cursor:pointer" title="点击开始索引">' + label + '</a>' : '<span class="badge badge-secondary">' + label + '</span>';
+			if (!status) return '<span class="text-muted">—</span>';
+			var s = status.zoekt_status || '未索引';
+			if (s === '索引中' || s === '清理中') return '<span class="badge badge-warning"><i class="fa fa-spinner fa-spin"></i> ' + s + '</span>';
+			if (s === '已索引') return '<span class="badge badge-success">已索引</span>';
+			return '<span class="badge badge-secondary">未索引</span>';
 		}
 
 		$(function() {
 			loadIndexStatus();
+			// 定时轮询索引状态，回调更新 DB 后自动刷新展示（回调异步，前端无法实时感知）
+			var indexStatusPollTimer = setInterval(loadIndexStatus, 15000);
+			$(window).on('beforeunload', function() { clearInterval(indexStatusPollTimer); });
 			var options = {
 				url: prefix + "/repo/list",
 				sortName: "fullName",
@@ -138,7 +196,7 @@
 					escape: false,
 					formatter: function(value, row, index) {
 						var sn = getServiceName(row);
-						return formatQdrantStatus(indexStatusMap[sn], row);
+						return formatQdrantStatus(getStatusByServiceName(sn), row);
 					}
 				}, {
 					title: 'Zoekt',
@@ -146,7 +204,7 @@
 					escape: false,
 					formatter: function(value, row, index) {
 						var sn = getServiceName(row);
-						return formatZoektStatus(indexStatusMap[sn], row);
+						return formatZoektStatus(getStatusByServiceName(sn), row);
 					}
 				}, {
 					field: 'lastSyncAt',
@@ -156,16 +214,19 @@
 					align: 'center',
 					escape: false,
 					formatter: function(value, row, index) {
-						var actions = [];
-						actions.push('<a href="#" class="btn btn-success btn-xs repo-action" data-action="edit" data-repo-id="' + escAttr(row.id || '') + '"><i class="fa fa-edit"></i>编辑</a> ');
+						var sn = getServiceName(row);
+						var snEsc = escAttr(sn);
+						var repoId = escAttr(row.id || '');
+						var html = '<a href="#" class="btn btn-success btn-xs repo-action" data-action="edit" data-repo-id="' + repoId + '"><i class="fa fa-edit"></i>编辑</a> ';
+						html += '<div class="btn-group" style="margin-left:4px;"><button type="button" class="btn btn-default btn-xs dropdown-toggle" data-toggle="dropdown"><i class="fa fa-ellipsis-v"></i> 更多 <span class="caret"></span></button>';
+						html += '<ul class="dropdown-menu dropdown-menu-right" role="menu">';
+						html += '<li><a href="javascript:void(0)" class="repo-action" data-action="view-logs" data-service="' + snEsc + '"><i class="fa fa-file-text-o"></i> 日志查看</a></li>';
 						if (editFlag && row.enabled == 1) {
-							var sn = getServiceName(row);
-							var snEsc = escAttr(sn);
-							actions.push('<a href="#" class="btn btn-primary btn-xs repo-action" data-action="index-qdrant" data-service="' + snEsc + '"><i class="fa fa-database"></i>索引</a> ');
-							actions.push('<a href="#" class="btn btn-warning btn-xs repo-action" data-action="reset-index" data-service="' + snEsc + '"><i class="fa fa-refresh"></i>重置</a> ');
-							actions.push('<a href="#" class="btn btn-danger btn-xs repo-action" data-action="clear-index" data-service="' + snEsc + '"><i class="fa fa-trash"></i>清除</a> ');
+							html += '<li><a href="javascript:void(0)" class="repo-action" data-action="index-repo" data-service="' + snEsc + '"><i class="fa fa-database"></i> 重新索引</a></li>';
+							html += '<li><a href="javascript:void(0)" class="repo-action" data-action="resync" data-service="' + snEsc + '"><i class="fa fa-refresh"></i> 重新同步</a></li>';
 						}
-						return actions.join('');
+						html += '</ul></div>';
+						return html;
 					}
 				}]
 			};
@@ -183,14 +244,12 @@
 					$.modal.open('编辑仓库', prefix + '/repo/edit?id=' + encodeURIComponent(repoId));
 				} else if (action === 'toggle-enabled' && repoId != null && enabled != null) {
 					toggleEnabledById(repoId, parseInt(enabled, 10));
-				} else if (action === 'index-qdrant' && service) {
+				} else if (action === 'view-logs' && service) {
+					showRepoLogModal(service);
+				} else if (action === 'index-repo' && service) {
 					indexRepo(service);
-				} else if (action === 'index-zoekt' && service) {
-					indexZoektRepo(service);
-				} else if (action === 'reset-index' && service) {
-					resetRepoIndex(service);
-				} else if (action === 'clear-index' && service) {
-					clearRepoIndex(service);
+				} else if (action === 'resync' && service) {
+					resyncRepo(service);
 				}
 			});
 		});
@@ -248,6 +307,8 @@
 						$.modal.msgSuccess(enabled ? "已启用，已同步到 RootSeeker" : "已禁用，已从 RootSeeker 移除");
 						$.table.refresh();
 						loadIndexStatus();
+						// 回调异步到达，延迟刷新以捕获回调更新后的索引状态
+						setTimeout(function() { loadIndexStatus(); $('#bootstrap-table').bootstrapTable('refresh'); }, 4000);
 					} else {
 						$.modal.alertError(result.msg);
 					}
@@ -281,26 +342,89 @@
 			});
 		}
 
-		function indexZoektRepo(serviceName) {
-			$.modal.loading("正在建 Zoekt 索引...");
+		function syncIndexStatus() {
+			$.modal.loading("正在从 RootSeeker 同步索引状态...");
 			$.ajax({
-				url: prefix + "/index/zoekt",
+				url: prefix + "/index/sync-status",
 				type: "post",
-				data: { serviceName: serviceName },
 				dataType: "json",
 				success: function(result) {
 					$.modal.closeLoading();
 					if (result.code == web_status.SUCCESS) {
 						$.modal.msgSuccess(result.msg);
 						loadIndexStatus();
+						$('#bootstrap-table').bootstrapTable('refresh');
 					} else {
 						$.modal.alertError(result.msg);
 					}
 				},
 				error: function(xhr) {
 					$.modal.closeLoading();
-					$.modal.alertError("Zoekt 索引失败：" + (xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : "请检查 RootSeeker 服务及 zoekt-index 是否已安装"));
+					$.modal.alertError("同步失败：" + (xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : "请确保 RootSeeker 服务已启动"));
 				}
+			});
+		}
+
+		var repoLogServiceName = null;
+		function showRepoLogModal(serviceName) {
+			repoLogServiceName = serviceName;
+			$('#repoLogServiceName').text(serviceName || '');
+			$('#repoLogModal').modal('show');
+			$('#repoJobLogPanel').hide();
+			refreshRepoLog();
+		}
+		function refreshRepoLog() {
+			if (!repoLogServiceName) return;
+			$.ajax({
+				url: prefix + "/index/queue",
+				type: "get",
+				dataType: "json",
+				success: function(result) {
+					if (result.code == web_status.SUCCESS && result.data) {
+						var jobs = (result.data.jobs || []).filter(function(j) { return j.service_name === repoLogServiceName; });
+						var statusCls = { queued: 'warning', running: 'info', completed: 'success', failed: 'danger' };
+						var html = '';
+						for (var i = 0; i < jobs.length; i++) {
+							var j = jobs[i];
+							var st = j.status || '';
+							var badge = st === 'running' ? '<i class="fa fa-spinner fa-spin"></i> ' : '';
+							badge += (st === 'queued' ? '排队' : st === 'running' ? '执行中' : st === 'completed' ? '完成' : st === 'failed' ? '失败' : st);
+							html += '<tr><td>' + (j.job_id || '') + '</td><td>' + (j.task_type || '') + '</td>';
+							html += '<td><span class="badge badge-' + (statusCls[st] || 'secondary') + '">' + badge + '</span></td>';
+							html += '<td>' + (j.created_at || '') + '</td>';
+							html += '<td><a href="javascript:void(0)" class="repo-job-log-link" data-job-id="' + escAttr(j.job_id || '') + '">查看日志</a></td></tr>';
+						}
+						$('#repoLogTbody').html(html || '<tr><td colspan="5" class="text-muted">该仓库暂无索引任务。可点击「更多 → 重新索引」触发后刷新。</td></tr>');
+						$('#repoLogTbody').off('click').on('click', '.repo-job-log-link', function() {
+							showRepoJobLog($(this).data('job-id'));
+						});
+					} else {
+						$('#repoLogTbody').html('<tr><td colspan="5" class="text-danger">' + (result.msg || '获取失败') + '</td></tr>');
+					}
+				},
+				error: function(xhr) {
+					$('#repoLogTbody').html('<tr><td colspan="5" class="text-danger">获取失败：' + ((xhr.responseJSON && xhr.responseJSON.msg) ? xhr.responseJSON.msg : '请检查 RootSeeker 服务') + '</td></tr>');
+				}
+			});
+		}
+		function showRepoJobLog(jobId) {
+			if (!jobId) return;
+			$('#repoJobLogPanel').show();
+			$.ajax({
+				url: prefix + "/index/job/" + encodeURIComponent(jobId),
+				type: "get",
+				dataType: "json",
+				success: function(result) {
+					if (result.code == web_status.SUCCESS && result.data) {
+						var d = result.data;
+						var logs = (d.logs || []).join('\n');
+						if (d.error) logs += '\n[错误] ' + d.error;
+						$('#repoJobLogContent').text(logs || '(无日志)');
+					} else {
+						$('#repoJobLogContent').text('获取失败');
+					}
+				},
+				error: function() { $('#repoJobLogContent').text('请求失败'); }
 			});
 		}
 
@@ -314,7 +438,7 @@
 				success: function(result) {
 					$.modal.closeLoading();
 					if (result.code == web_status.SUCCESS) {
-						$.modal.msgSuccess("索引完成：" + (result.data && result.data.indexed_chunks ? result.data.indexed_chunks + " 块" : ""));
+						$.modal.msgSuccess(result.msg || "已入队处理");
 						loadIndexStatus();
 					} else {
 						$.modal.alertError(result.msg);
@@ -322,50 +446,28 @@
 				},
 				error: function(xhr) {
 					$.modal.closeLoading();
-					$.modal.alertError("索引失败：" + (xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : "请检查 RootSeeker 服务"));
+					$.modal.alertError("索引失败：" + (xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : ""));
 				}
 			});
 		}
 
-		function resetRepoIndex(serviceName) {
-			$.modal.confirm("确定清除并重新索引该仓库？", function() {
-				$.modal.loading("正在重置...");
+		function resyncRepo(serviceName) {
+			$.modal.confirm("确定重新同步该仓库？将先清除索引再重新添加，完成后触发依赖图重建。", function() {
 				$.ajax({
-					url: prefix + "/index/repo/reset",
+					url: prefix + "/index/repo/resync",
 					type: "post",
 					data: { serviceName: serviceName },
 					dataType: "json",
 					success: function(result) {
-						$.modal.closeLoading();
 						if (result.code == web_status.SUCCESS) {
-							$.modal.msgSuccess("重置完成");
+							$.modal.msgSuccess(result.msg || "已入队处理");
 							loadIndexStatus();
 						} else {
 							$.modal.alertError(result.msg);
 						}
 					},
 					error: function(xhr) {
-						$.modal.closeLoading();
-						$.modal.alertError("重置失败：" + (xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : ""));
-					}
-				});
-			});
-		}
-
-		function clearRepoIndex(serviceName) {
-			$.modal.confirm("确定清除该仓库的向量索引？", function() {
-				$.ajax({
-					url: prefix + "/index/repo/clear",
-					type: "post",
-					data: { serviceName: serviceName },
-					dataType: "json",
-					success: function(result) {
-						if (result.code == web_status.SUCCESS) {
-							$.modal.msgSuccess("已清除");
-							loadIndexStatus();
-						} else {
-							$.modal.alertError(result.msg);
-						}
+						$.modal.alertError("重新同步失败：" + (xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : ""));
 					}
 				});
 			});
@@ -419,6 +521,81 @@
 						$.modal.alertError("全量重载失败：" + (xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : ""));
 					}
 				});
+			});
+		}
+
+		var queuePollTimer = null;
+		function indexQueueModal() {
+			$('#indexQueueModal').modal('show');
+			refreshQueue();
+			$('#indexQueueModal').off('hidden.bs.modal').on('hidden.bs.modal', function() {
+				if (queuePollTimer) { clearInterval(queuePollTimer); queuePollTimer = null; }
+			});
+		}
+		function refreshQueue() {
+			$.ajax({
+				url: prefix + "/index/queue",
+				type: "get",
+				dataType: "json",
+				success: function(result) {
+					if (result.code == web_status.SUCCESS && result.data) {
+						var d = result.data;
+						var qt = d.queue_type || '-';
+						$('#queueType').text(qt);
+						var jobs = d.jobs || [];
+						var hasActive = jobs.some(function(j){ return j.status === 'queued' || j.status === 'running'; });
+						var html = '';
+						var statusCls = { queued: 'warning', running: 'info', completed: 'success', failed: 'danger' };
+						for (var i = 0; i < jobs.length; i++) {
+							var j = jobs[i];
+							var st = j.status || '';
+							var badge = st === 'running' ? '<i class="fa fa-spinner fa-spin"></i> ' : '';
+							badge += (st === 'queued' ? '排队' : st === 'running' ? '执行中' : st === 'completed' ? '完成' : st === 'failed' ? '失败' : st);
+							html += '<tr><td>' + (j.job_id || '') + '</td><td>' + (j.service_name || '') + '</td><td>' + (j.task_type || '') + '</td>';
+							html += '<td><span class="badge badge-' + (statusCls[st] || 'secondary') + '">' + badge + '</span></td>';
+							html += '<td>' + (j.created_at || '') + '</td>';
+							html += '<td><a href="javascript:void(0)" class="job-log-link" data-job-id="' + escAttr(j.job_id || '') + '" data-service="' + escAttr(j.service_name || '') + '">查看日志</a></td></tr>';
+						}
+						var emptyHint = qt === 'none' ? '索引队列未启用（RootSeeker 需配置 indexing_queue: memory）' : '暂无任务。可点击仓库行的「更多 → 重新索引」触发索引后此处会显示任务。';
+						$('#queueTbody').html(html || '<tr><td colspan="6" class="text-muted">' + emptyHint + '</td></tr>');
+						$('#queueTbody').off('click').on('click', '.job-log-link', function() {
+							showJobLog($(this).data('job-id'), $(this).data('service'));
+						});
+						if (hasActive) {
+							if (!queuePollTimer) queuePollTimer = setInterval(function(){ refreshQueue(); loadIndexStatus(); $('#bootstrap-table').bootstrapTable('refresh'); }, 3000);
+						} else if (queuePollTimer) { clearInterval(queuePollTimer); queuePollTimer = null; }
+						if (hasActive) loadIndexStatus();
+					} else {
+						$('#queueType').text('-');
+						$('#queueTbody').html('<tr><td colspan="6" class="text-danger">' + (result.msg || '获取队列失败') + '，请检查 RootSeeker 服务是否启动、baseUrl 与 api_key 是否配置正确</td></tr>');
+					}
+				},
+				error: function(xhr) {
+					$('#queueType').text('-');
+					var msg = (xhr.responseJSON && xhr.responseJSON.msg) ? xhr.responseJSON.msg : '请求失败';
+					$('#queueTbody').html('<tr><td colspan="6" class="text-danger">获取队列失败：' + msg + '，请检查 RootSeeker 服务是否启动</td></tr>');
+				}
+			});
+		}
+		function showJobLog(jobId, serviceName) {
+			if (!jobId) return;
+			$('#jobLogPanel').show();
+			$('#jobLogTitle').text(serviceName ? ' - ' + serviceName : '');
+			$.ajax({
+				url: prefix + "/index/job/" + encodeURIComponent(jobId),
+				type: "get",
+				dataType: "json",
+				success: function(result) {
+					if (result.code == web_status.SUCCESS && result.data) {
+						var d = result.data;
+						var logs = (d.logs || []).join('\n');
+						if (d.error) logs += '\n[错误] ' + d.error;
+						$('#jobLogContent').text(logs || '(无日志)');
+					} else {
+						$('#jobLogContent').text('获取失败');
+					}
+				},
+				error: function() { $('#jobLogContent').text('请求失败'); }
 			});
 		}
 	</script>

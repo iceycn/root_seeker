@@ -1,0 +1,45 @@
+# 本地数据源配置（复制为 application-local.yml 并填入实际值）
+# 用法: cp application-local.example.yml application-local.yml
+# profile=local 时独立使用，无需 druid profile
+spring:
+  datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    druid:
+      master:
+        url: jdbc:mysql://localhost:3306/root_seeker?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&zeroDateTimeBehavior=convertToNull&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=GMT%2B8
+        username: root
+        # 直接填写密码，或使用 ${MYSQL_PASSWORD:} 从 .env 读取
+        password: your_password
+      slave:
+        enabled: false
+        url:
+        username:
+        password:
+      initialSize: 5
+      minIdle: 10
+      maxActive: 20
+      maxWait: 60000
+      connectTimeout: 30000
+      socketTimeout: 60000
+      timeBetweenEvictionRunsMillis: 60000
+      minEvictableIdleTimeMillis: 300000
+      maxEvictableIdleTimeMillis: 900000
+      validationQuery: SELECT 1 FROM DUAL
+      testWhileIdle: true
+      testOnBorrow: false
+      testOnReturn: false
+      webStatFilter:
+        enabled: true
+      statViewServlet:
+        enabled: true
+        allow:
+        url-pattern: /druid/*
+        login-username: ruoyi
+        login-password: 123456
+      filter:
+        stat:
+          enabled: true
+        wall:
+          config:
+            multi-statement-allow: true

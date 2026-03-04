@@ -13,6 +13,83 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+def _strip_line_comments(sql: str) -> str:
+    lines: list[str] = []
+    for line in sql.splitlines():
+        s = line.lstrip()
+        if s.startswith("--"):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _split_sql_statements(sql: str) -> list[str]:
+    sql = _strip_line_comments(sql)
+    parts = sql.split(";")
+    stmts: list[str] = []
+    for part in parts:
+        stmt = part.strip()
+        if stmt:
+            stmts.append(stmt)
+    return stmts
+
+
+def _migrate_repo_index_status_single_field(cur, database: str) -> None:
+    def col_exists(col: str) -> bool:
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA=%s AND TABLE_NAME='repo_index_status' AND COLUMN_NAME=%s
+            """,
+            (database, col),
+        )
+        return (cur.fetchone() or (0,))[0] > 0
+
+    if not col_exists("qdrant_status"):
+        cur.execute(
+            """
+            ALTER TABLE repo_index_status
+                ADD COLUMN qdrant_status VARCHAR(20) NOT NULL DEFAULT '未索引'
+                COMMENT 'Qdrant状态：未索引/索引中/已索引/清理中'
+            """
+        )
+    if not col_exists("zoekt_status"):
+        cur.execute(
+            """
+            ALTER TABLE repo_index_status
+                ADD COLUMN zoekt_status VARCHAR(20) NOT NULL DEFAULT '未索引'
+                COMMENT 'Zoekt状态：未索引/索引中/已索引/清理中'
+            """
+        )
+
+    if col_exists("qdrant_indexed") and col_exists("qdrant_indexing"):
+        cur.execute(
+            """
+            UPDATE repo_index_status SET
+                qdrant_status = CASE
+                    WHEN qdrant_indexing = 1 THEN '索引中'
+                    WHEN qdrant_indexed = 1 THEN '已索引'
+                    ELSE '未索引'
+                END
+            """
+        )
+    if col_exists("zoekt_indexed") and col_exists("zoekt_indexing"):
+        cur.execute(
+            """
+            UPDATE repo_index_status SET
+                zoekt_status = CASE
+                    WHEN zoekt_indexing = 1 THEN '索引中'
+                    WHEN zoekt_indexed = 1 THEN '已索引'
+                    ELSE '未索引'
+                END
+            """
+        )
+
+    for old_col in ("qdrant_indexed", "qdrant_indexing", "zoekt_indexed", "zoekt_indexing"):
+        if col_exists(old_col):
+            cur.execute(f"ALTER TABLE repo_index_status DROP COLUMN {old_col}")
+
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="执行数据库迁移")
@@ -40,6 +117,8 @@ def main() -> None:
     except ImportError:
         print("[ERROR] 请安装 PyMySQL: pip install pymysql")
         sys.exit(1)
+
+    ignore_error_codes = {1050, 1060, 1061, 1091}
 
     migrations_dir = ROOT / "scripts" / "migrations"
     if not migrations_dir.exists():
@@ -69,10 +148,17 @@ def main() -> None:
                 charset="utf8mb4",
             )
             with conn.cursor() as cur:
-                for stmt in sql.split(";"):
-                    stmt = stmt.strip()
-                    if stmt and not stmt.startswith("--"):
-                        cur.execute(stmt)
+                if fp.name == "004_repo_index_status_single_field.sql":
+                    _migrate_repo_index_status_single_field(cur, database)
+                else:
+                    for stmt in _split_sql_statements(sql):
+                        try:
+                            cur.execute(stmt)
+                        except pymysql.MySQLError as e:
+                            code = e.args[0] if getattr(e, "args", None) else None
+                            if code in ignore_error_codes:
+                                continue
+                            raise
             conn.commit()
             conn.close()
             print(f"  [OK] {fp.name}")

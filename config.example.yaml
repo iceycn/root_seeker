@@ -129,6 +129,7 @@ qdrant:
   url: "http://127.0.0.1:6333"
   api_key: null
   collection: "code_chunks"
+  # timeout: 30   # 请求超时（秒），默认 30，避免 count 等操作超时导致 500
 
 # Git 仓库发现：根据域名+账号密码获取仓库列表，支持分支选择与定期同步
 # 存储默认用文件，可切换 MySQL（需 pip install root-seeker[mysql]）

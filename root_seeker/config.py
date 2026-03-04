@@ -87,6 +87,7 @@ class QdrantStoreConfig(BaseModel):
     url: str = "http://127.0.0.1:6333"
     api_key: str | None = None
     collection: str = "code_chunks"
+    timeout: int = Field(default=30, description="Qdrant 请求超时（秒），默认 30，避免 count 等操作超时导致 500")
 
 
 class GitSourceConfig(BaseModel):
@@ -166,6 +167,7 @@ class AppConfig(BaseModel):
     auto_index_interval_seconds: int = Field(default=7200, description="向量索引更新间隔（秒），默认2小时（7200秒），仅在 auto_index_after_sync=false 时生效")
     auto_sync_concurrency: int = Field(default=8, description="仓库同步并发数，默认8")
     auto_index_concurrency: int = Field(default=1, description="向量索引并发数，默认1（按仓库排队加载，避免一次性加载过多）")
+    indexing_queue: str = Field(default="memory", description="索引队列策略：memory（默认内存队列），后续可扩展 redis 等")
 
 
 @dataclass(frozen=True)

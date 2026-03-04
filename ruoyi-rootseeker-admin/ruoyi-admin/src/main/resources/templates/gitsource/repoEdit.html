@@ -2,6 +2,7 @@
 <html lang="zh" xmlns:th="http://www.thymeleaf.org">
 <head>
 	<th:block th:include="include :: header('编辑仓库')" />
+	<th:block th:include="include :: select2-css" />
 </head>
 <body class="white-bg">
     <div class="wrapper wrapper-content animated fadeInRight ibox-content">
@@ -17,11 +18,13 @@
                 </div>
             </div>
             <div class="form-group">
-                <label class="col-sm-3 control-label">分支（逗号分隔）：</label>
+                <label class="col-sm-3 control-label">分支：</label>
                 <div class="col-sm-8">
-                    <input id="branches" name="branches" class="form-control" type="text" 
-                        th:value="${repo.defaultBranch}" 
-                        placeholder="如 main,master，多个用逗号分隔"/>
+                    <select id="branches" name="branches" class="form-control"
+                        th:attr="data-repo-id=${repo.id},data-selected=${repo.selectedBranches},data-default=${repo.defaultBranch}"
+                        placeholder="输入搜索分支">
+                    </select>
+                    <span class="help-block">下拉自动加载前10条分支，输入可搜索</span>
                 </div>
             </div>
             <div class="form-group">
@@ -40,10 +43,53 @@
         </form>
     </div>
     <th:block th:include="include :: footer" />
+    <th:block th:include="include :: select2-js" />
     <script type="text/javascript">
         var prefix = ctx + "gitsource";
+        $(function() {
+            var $sel = $("#branches");
+            var repoId = $sel.data("repo-id") || "";
+            var selectedStr = $sel.data("selected") || "";
+            var defaultBranch = $sel.data("default") || "";
+            var initialBranches = [];
+            try {
+                if (selectedStr) {
+                    var parsed = JSON.parse(selectedStr);
+                    initialBranches = Array.isArray(parsed) ? parsed : (parsed ? [String(parsed)] : []);
+                }
+            } catch (e) {
+                if (selectedStr && typeof selectedStr === 'string') {
+                    initialBranches = selectedStr.split(/[\s,]+/).filter(Boolean);
+                }
+            }
+            if (initialBranches.length === 0 && defaultBranch) initialBranches = [defaultBranch];
+            var initialVal = (initialBranches[0] && String(initialBranches[0]).trim()) || "";
+            if (initialVal) $sel.append($("<option></option>").val(initialVal).text(initialVal).prop("selected", true));
+            $sel.select2({
+                placeholder: "输入搜索分支",
+                allowClear: true,
+                tags: true,
+                ajax: {
+                    url: prefix + "/repo/branches",
+                    dataType: "json",
+                    delay: 250,
+                    data: function(params) {
+                        return { repoId: repoId, search: params.term || "" };
+                    },
+                    processResults: function(resp) {
+                        var d = (resp && resp.data) ? resp.data : (resp || {});
+                        var list = d.results || [];
+                        if (resp.code !== undefined && resp.code !== 0) return { results: [] };
+                        return { results: list, pagination: d.pagination || {} };
+                    }
+                },
+                minimumInputLength: 0
+            });
+            if (initialVal) $sel.val(initialVal).trigger('change');
+        });
         function submitHandler(index, layero) {
-            var branches = $("#branches").val();
+            var val = $("#branches").val();
+            var branches = (val && Array.isArray(val)) ? val.join(",") : (val ? String(val) : "");
             var enabled = $("input[name='enabled']:checked").val() === 'true';
             $.ajax({
                 url: prefix + "/repo/edit",

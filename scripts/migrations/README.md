@@ -14,6 +14,10 @@
 
 **解析失败**时，`error` 字段记录失败原因。
 
+**002 迁移**：新增 `repo_id` 列，关联 `git_source_repos.id`，实现日志与仓库关联。若列已存在，可跳过 ADD COLUMN 语句。
+
+**004 迁移**：repo_index_status 单字段状态。将 qdrant_indexed/qdrant_indexing、zoekt_indexed/zoekt_indexing 合并为 qdrant_status、zoekt_status（值：未索引|索引中|已索引|清理中）。
+
 ## 执行迁移
 
 ```bash

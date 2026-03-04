@@ -29,17 +29,23 @@
 | [docs/LLM_MULTI_TURN_OPTIMIZATION.md](LLM_MULTI_TURN_OPTIMIZATION.md) | **LLM 多轮对话优化方案**：参考 Cursor/Trae 的多轮对话模式，设计分阶段分析、Self-Refine 迭代优化等方案 |
 | [docs/LLM_MULTI_TURN_IMPLEMENTATION.md](LLM_MULTI_TURN_IMPLEMENTATION.md) | **LLM 多轮对话实现总结**：三套多轮对话机制的实现细节、使用方法、配置说明 |
 | [docs/LOG_CHAIN_ENRICHMENT.md](LOG_CHAIN_ENRICHMENT.md) | **日志链自动读取功能**：使用 LLM 智能提取 trace_id/request_id，自动查询调用链日志 |
+| [docs/REPO_SYNC_AND_INDEX_ANALYSIS.md](REPO_SYNC_AND_INDEX_ANALYSIS.md) | 仓库同步与索引逻辑分析 |
+| [docs/EVENT_FLOW.md](EVENT_FLOW.md) | **事件化流程文档**：索引、移除、重新同步、全量清除等事件链路与 API 映射 |
+| [docs/callback-integration.md](callback-integration.md) | **索引回调对接**：Admin 与 RootSeeker 回调协议、单字段状态（未索引/索引中/已索引/清理中）、乐观更新流程 |
 | [docs/CONFIG_CHECKLIST.md](CONFIG_CHECKLIST.md) | 配置缺项说明与填写方式 |
 | [docs/INSTALL_DEPENDENCIES.md](INSTALL_DEPENDENCIES.md) | **依赖组件安装指南**：Qdrant、Zoekt 等自行安装步骤（Docker/二进制/Go） |
+| [docs/PORTS_AND_ENDPOINTS.md](PORTS_AND_ENDPOINTS.md) | **端口与地址总览**：本机/ Docker 端口矩阵、访问地址、回调 URL 模板 |
+| [docs/TROUBLESHOOTING.md](TROUBLESHOOTING.md) | **常见问题排查**：启动、端口、MySQL、回调、索引等 Runbook |
 | [docs/deploy/00-overview.md](deploy/00-overview.md) | 部署总览与依赖关系 |
 | [docs/deploy/01-zoekt.md](deploy/01-zoekt.md) | Zoekt 傻瓜部署 |
 | [docs/deploy/02-qdrant.md](deploy/02-qdrant.md) | Qdrant 傻瓜部署 |
-| [docs/deploy/03-RootSeeker.md](deploy/03-RootSeeker.md) | RootSeeker 应用傻瓜部署 |
+| [docs/deploy/03-root-seeker.md](deploy/03-root-seeker.md) | RootSeeker 应用傻瓜部署 |
 | [docs/deploy/04-aliyun-sls.md](deploy/04-aliyun-sls.md) | 阿里云 SLS 配置与打通 |
 | [docs/deploy/05-notifiers.md](deploy/05-notifiers.md) | 企业微信 / 钉钉配置 |
+| [docs/deploy/06-admin-mysql.md](deploy/06-admin-mysql.md) | RootSeeker Admin + MySQL 部署（本机 / Docker） |
 | [docs/WEBADMIN_ANALYSIS.md](WEBADMIN_ANALYSIS.md) | **WebAdmin 方案分析**：FastAPI-Amis-Admin、SQLAdmin 等 Python 方案对比 |
 | [docs/WEBADMIN_RUOYI_ARCHITECTURE.md](WEBADMIN_RUOYI_ARCHITECTURE.md) | **若依异构架构**：新开独立项目，RuoYi + RootSeeker 共享 MySQL，仓库管理 |
-| [root_seeker_docker/README.md](../root_seeker_docker/README.md) | **Docker 部署**：Qdrant + RootSeeker 容器化，无 Docker 时用脚本一键启动 |
+| [root_seeker_docker/README.md](../root_seeker_docker/README.md) | **Docker 部署**：全栈容器化（含 MySQL / Qdrant / Zoekt / RootSeeker / Admin） |
 
 ## 4. 文档是否已整合好？
 
@@ -53,4 +59,4 @@
 | **项目结构是否 OK** | ✅ 分层清晰，高内聚低耦合，可扩展与设计模式已落地；见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)、[DESIGN_AND_REQUIREMENTS.md](DESIGN_AND_REQUIREMENTS.md) 第五节。 |
 | **文档是否已整合好** | ✅ 使用/方案/项目/部署四类文档齐全，本文档为索引；设计与需求已统一整理到 DESIGN_AND_REQUIREMENTS。 |
 | **目前还需要哪些优化** | 见 [OPTIMIZATION_CHECKLIST.md](OPTIMIZATION_CHECKLIST.md)、[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)：✅ P0/P1 已完成；P2（脱敏、白名单、多 LLM、语言扩展）→ P3（并发、增量索引、审计轮转）。 |
-| **各组件傻瓜部署是否完善** | ✅ deploy/00～05 覆盖总览、Zoekt、Qdrant、RootSeeker、阿里云 SLS、企业微信/钉钉；顺序与依赖见 [00-overview.md](deploy/00-overview.md)。 |
+| **各组件傻瓜部署是否完善** | ✅ deploy/00～06 覆盖总览、Zoekt、Qdrant、RootSeeker、阿里云 SLS、企业微信/钉钉、Admin/MySQL；顺序与依赖见 [00-overview.md](deploy/00-overview.md)。 |

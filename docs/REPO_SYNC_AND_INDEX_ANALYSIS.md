@@ -36,18 +36,26 @@
 - **cloned**：全量索引（新克隆无 ORIG_HEAD）
 - Zoekt：需手动执行 `bash scripts/index-zoekt-all.sh` 或定时任务
 
-### 2.4 全量重载与排队机制
+### 2.4 全量重载与排队机制（事件化）
 
-- **POST /index/reset-all**：强制清除全部向量。`?reindex=true` 时清除后按仓库排队重新索引
-- **POST /index/repo/{service_name}/reset**：清除单仓库向量并全量重索引
-- **POST /repos/full-reload**：先同步（git pull），再清除向量并从头索引；`service_name` 可选
-- **排队加载**：`auto_index_concurrency`（默认 1）控制向量索引并发，按仓库在内存中排队，避免一次性加载过多
+- **POST /index/reset-all**：发出 RequestResetAllEvent，清除全部向量；`reindex=true` 时为每个仓库入队索引
+- **POST /index/repo/{service_name}/resync**：发出 RequestResyncRepoEvent，先清除后添加，添加完成后触发依赖图重建（通过队列）
+- **POST /index/repo/{service_name}/reset**：清除单仓库向量并全量重索引（同步执行，保留兼容）
+- **POST /repos/full-reload**：发出 RequestFullReloadEvent，后台同步后为每个仓库入队移除与索引
+- **事件流程**：详见 [EVENT_FLOW.md](EVENT_FLOW.md)
 
 ### 2.5 向量增量索引（vector_indexer）
 
 - `index_repo(..., incremental=True)`：`git diff --name-only ORIG_HEAD HEAD` 获取变更的 .py/.java 文件
 - 对每个变更文件：先 `delete_points_by_file` 删旧点，再 chunk + embed + upsert
 - ORIG_HEAD 不存在或 diff 失败时回退全量索引
+
+### 2.6 索引状态（repo_index_status）
+
+- **单字段状态**：`qdrant_status`、`zoekt_status` 取值：未索引 | 索引中 | 已索引 | 清理中
+- **流转**：未索引 → 索引中 → 已索引；已索引 → 清理中 → 未索引
+- **乐观更新**：Admin 发起索引/清除时先改本地状态，再调 RootSeeker，回调到达后更新为最终状态
+- 详见 [callback-integration.md](callback-integration.md)
 
 ## 三、任务列表（无需手动）
 

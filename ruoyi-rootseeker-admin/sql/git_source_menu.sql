@@ -5,6 +5,7 @@ INSERT INTO sys_menu VALUES('5', 'Git 仓库', '0', '5', '#', '', 'M', '0', '1',
 INSERT INTO sys_menu VALUES('200', '仓库管理', '5', '1', '/gitsource/repo', '', 'C', '0', '1', 'gitsource:repo:view', 'fa fa-list', 'admin', sysdate(), '', null, 'Git 仓库列表');
 INSERT INTO sys_menu VALUES('201', '凭证配置', '5', '2', '/gitsource/credential', '', 'C', '0', '1', 'gitsource:credential:view', 'fa fa-key', 'admin', sysdate(), '', null, 'Git 平台凭证');
 INSERT INTO sys_menu VALUES('202', 'RootSeeker 配置', '5', '3', '/gitsource/config', '', 'C', '0', '1', 'gitsource:config:view', 'fa fa-cog', 'admin', sysdate(), '', null, 'RootSeeker 分析服务地址');
+INSERT INTO sys_menu VALUES('203', '异常测试', '5', '4', '/gitsource/ingestTest', '', 'C', '0', '1', 'gitsource:repo:view', 'fa fa-bug', 'admin', sysdate(), '', null, '提交错误日志到 RootSeeker 分析');
 -- 按钮权限
 INSERT INTO sys_menu VALUES('1200', '仓库查询', '200', '1', '#', '', 'F', '0', '1', 'gitsource:repo:list', '#', 'admin', sysdate(), '', null, '');
 INSERT INTO sys_menu VALUES('1201', '仓库编辑', '200', '2', '#', '', 'F', '0', '1', 'gitsource:repo:edit', '#', 'admin', sysdate(), '', null, '');
@@ -16,6 +17,7 @@ INSERT INTO sys_role_menu VALUES(1, 5);
 INSERT INTO sys_role_menu VALUES(1, 200);
 INSERT INTO sys_role_menu VALUES(1, 201);
 INSERT INTO sys_role_menu VALUES(1, 202);
+INSERT INTO sys_role_menu VALUES(1, 203);
 INSERT INTO sys_role_menu VALUES(1, 1200);
 INSERT INTO sys_role_menu VALUES(1, 1201);
 INSERT INTO sys_role_menu VALUES(1, 1202);

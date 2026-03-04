@@ -39,3 +39,8 @@ CREATE TABLE IF NOT EXISTS git_source_repos (
 INSERT INTO sys_config (config_name, config_key, config_value, config_type, create_by, create_time, remark)
 SELECT 'RootSeeker 分析服务地址', 'root.seeker.baseUrl', 'http://localhost:8000', 'Y', 'admin', sysdate(), 'RootSeeker 服务 base URL，用于拉取仓库、同步等。默认 http://localhost:8000'
 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_config WHERE config_key = 'root.seeker.baseUrl');
+
+-- 回调 URL：索引/清除任务完成后 RootSeeker POST 到此地址更新 repo_index_status。未配置则不会发送回调，状态不会更新
+INSERT INTO sys_config (config_name, config_key, config_value, config_type, create_by, create_time, remark)
+SELECT 'RootSeeker 回调地址', 'root.seeker.adminCallbackUrl', 'http://localhost:8080/gitsource/index/callback', 'Y', 'admin', sysdate(), '索引/清除任务完成后 RootSeeker 回调此 URL 更新状态。留空则不传 callback_url'
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_config WHERE config_key = 'root.seeker.adminCallbackUrl');

@@ -1,0 +1,42 @@
+# 端口与地址总览
+
+本文档统一说明 RootSeeker 各组件的默认端口、Docker 映射端口、以及常用访问地址，避免 8080/8088、3306/3307 等信息分散导致踩坑。
+
+## 1. 端口矩阵
+
+| 组件 | 本机一键脚本默认 | Docker 全栈默认（宿主机） | 说明 |
+|------|------------------|---------------------------|------|
+| RootSeeker（API） | 8000 | 8000 | FastAPI/uvicorn |
+| RootSeeker Admin（管理端） | 8080 | 8088 | Docker 使用 8088 避免与宿主机常见服务冲突 |
+| Qdrant（HTTP） | 6333 | 6333 | 向量库 |
+| Zoekt（Web） | 6070 | 6070 | 词法检索 Web/HTTP |
+| MySQL | （自备） | 3307 | Docker: 宿主机 3307 映射容器 3306 |
+
+## 2. 访问地址
+
+| 组件 | 地址 | 用途 |
+|------|------|------|
+| RootSeeker | http://localhost:8000 | API 服务 |
+| RootSeeker 健康检查 | http://127.0.0.1:8000/healthz | 启动自检 |
+| RootSeeker Admin（本机） | http://localhost:8080 | 管理端（默认 admin/admin123） |
+| RootSeeker Admin（Docker） | http://localhost:8088 | 管理端（Docker 默认） |
+| Zoekt | http://localhost:6070 | 词法检索 Web |
+| Qdrant | http://localhost:6333 | 向量库 HTTP |
+
+## 3. 一键脚本端口判定规则
+
+`scripts/start-all-one-click.sh` 与 `scripts/stop-all-one-click.sh` 只将“端口被本机 LISTEN 占用”视为占用，不会因为某个进程“连接到远端 8080（ESTABLISHED）”而误判端口冲突。
+
+## 4. 回调 URL（Admin 接收）
+
+索引回调默认路径：
+
+- `http://<admin_host>:<admin_port>/gitsource/index/callback`
+
+详细协议见 [callback-integration.md](callback-integration.md)。
+
+## 5. 配置提示（最常见的 3 个）
+
+- RootSeeker API Key：RootSeeker 若配置 `api_keys`，调用方需带 `X-API-Key`
+- Admin 访问 RootSeeker：优先在 Admin `sys_config` 配置 `root.seeker.baseUrl`
+- Docker 默认配置来源：`config_source=database`，配置在 MySQL 的 `app_config` 表中

@@ -66,11 +66,11 @@ Copy-Item config.example.yaml config.yaml
 | **macOS / Linux** | `bash scripts/start-all-one-click.sh` | `bash scripts/stop-all-one-click.sh` |
 | **Windows** | `scripts\start-all-one-click.bat` | `scripts\stop-all-one-click.bat` |
 
-启动后访问：RootSeeker `http://localhost:8000` | RootSeeker Admin `http://localhost:8080` | 日志目录 `logs/`
+启动后访问：RootSeeker `http://localhost:8000` | RootSeeker Admin `http://localhost:8080` | 日志目录 `logs/`（端口总览见 [docs/PORTS_AND_ENDPOINTS.md](docs/PORTS_AND_ENDPOINTS.md)）
 
 ### Docker 部署（可选）
 
-若已安装 Docker，可使用 `root_seeker_docker` 一键启动 Qdrant + RootSeeker：
+若已安装 Docker，可使用 `root_seeker_docker` 一键启动全套组件（MySQL + Qdrant + Zoekt + RootSeeker + RootSeeker Admin）：
 
 ```bash
 # 一键启动（自动处理 config.yaml 与 qdrant 地址）
@@ -107,7 +107,7 @@ Windows PowerShell：`.\root_seeker_docker\start.ps1`
 | **Embedding** | [docs/components/05-embedding.md](docs/components/05-embedding.md) | 向量模型：代码向量化配置 |
 | **仓库配置** | [docs/components/06-repos.md](docs/components/06-repos.md) | 代码仓库：repos、同步、索引流程 |
 | **通知** | [docs/components/07-notifiers.md](docs/components/07-notifiers.md) | 企业微信/钉钉 Webhook |
-| **数据存储** | [docs/components/08-data-storage.md](docs/components/08-data-storage.md) | 无数据库，文件存储结构、目录说明 |
+| **数据存储** | [docs/components/08-data-storage.md](docs/components/08-data-storage.md) | 默认文件存储结构、目录说明（含 MySQL 可选模式） |
 | **批量聚类** | [docs/components/09-batch-cluster.md](docs/components/09-batch-cluster.md) | 批量日志聚类、相似问题分组与抽样分析 |
 | **Git 仓库发现** | [docs/components/10-git-source.md](docs/components/10-git-source.md) | 根据域名+账号获取仓库列表，分支选择，文件/MySQL 存储 |
 
@@ -125,10 +125,12 @@ Windows PowerShell：`.\root_seeker_docker\start.ps1`
 | `POST /git-source/sync` | 同步仓库到本地，供分析使用 |
 | `GET /analysis/{analysis_id}` | 查询分析结果 |
 | `POST /repos/sync` | 同步/拉取仓库（git clone/pull） |
-| `POST /index/repo/{service_name}` | 为指定仓库建向量索引 |
-| `POST /index/repo/{service_name}/reset` | 单仓库全量重置（清除向量并重索引） |
-| `POST /index/reset-all` | 强制清除全部向量，`?reindex=true` 可重索引（按仓库排队） |
-| `POST /repos/full-reload` | 全量重载：同步 + 清除向量 + 重索引（按仓库排队） |
+| `POST /index/repo/{service_name}` | 为指定仓库建向量索引（事件入队） |
+| `POST /index/repo/{service_name}/resync` | 重新同步：先清除后添加，添加完成后触发依赖图重建（事件入队） |
+| `POST /index/repo/{service_name}/reset` | 单仓库全量重置（同步执行，兼容保留） |
+| `POST /index/repo/{service_name}/clear` | 仅清除该仓库 Qdrant/Zoekt 索引（事件入队） |
+| `POST /index/reset-all` | 全量清除，`?reindex=true` 可重索引（事件入队） |
+| `POST /repos/full-reload` | 全量重载：同步 + 清除 + 重索引（事件入队） |
 | `POST /graph/rebuild` | 重建服务依赖图 |
 
 ## 鉴权
@@ -137,7 +139,12 @@ Windows PowerShell：`.\root_seeker_docker\start.ps1`
 
 ## 更多文档
 
+- [事件化流程](docs/EVENT_FLOW.md) - 索引、移除、重新同步等事件链路与 API 映射
+- [索引回调对接](docs/callback-integration.md) - Admin 与 RootSeeker 回调协议、索引状态（未索引/索引中/已索引/清理中）
+- [端口与地址总览](docs/PORTS_AND_ENDPOINTS.md) - 本机/Docker 端口矩阵、访问地址、回调 URL 模板
+- [常见问题排查](docs/TROUBLESHOOTING.md) - 启动、端口、MySQL、回调、索引等 Runbook
 - [依赖组件安装指南](docs/INSTALL_DEPENDENCIES.md) - Qdrant、Zoekt 等自行安装
 - [部署总览](docs/deploy/00-overview.md)
+- [Admin + MySQL 部署](docs/deploy/06-admin-mysql.md)
 - [Docker 部署](root_seeker_docker/README.md)
 - [文档索引](docs/DOCUMENTATION_INDEX.md)
