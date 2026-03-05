@@ -1,9 +1,9 @@
 # RootSeeker Docker 镜像（不包含 Qdrant/Zoekt/Admin，需配合 docker-compose）
 # 含 zoekt-index，供 POST /index/zoekt/{service_name} 建索引
-FROM hub.rat.dev/library/golang:1.22-alpine AS zoekt-builder
+FROM golang:1.22-alpine AS zoekt-builder
 RUN export GOPROXY=https://goproxy.cn,direct GOTOOLCHAIN=auto; go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest
 
-FROM hub.rat.dev/library/python:3.11-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
