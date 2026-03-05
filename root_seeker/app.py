@@ -205,7 +205,7 @@ def create_app() -> FastAPI:
     # 初始化 LLM（需要在 LogEnricher 之前创建）
     llm = None
     llm_client_to_close = None
-    if cfg.llm is not None:
+    if cfg.llm is not None and str(cfg.llm.api_key or "").strip():
         use_chat_url = cfg.llm.kind == "doubao"
         base_llm = OpenAICompatLLM(
             OpenAICompatConfig(
@@ -224,6 +224,8 @@ def create_app() -> FastAPI:
             cfg=LlmRuntimeConfig(concurrency=cfg.llm_concurrency),
             audit=audit_logger,
         )
+    elif cfg.llm is not None:
+        app_logger.info("[App] 未配置 LLM api_key，已禁用云端 LLM（仅做检索与证据收集）")
 
     enrichment_cfg = EnrichmentConfig(
         time_window_seconds=300,

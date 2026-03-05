@@ -74,6 +74,7 @@ class LogEnricher:
     async def _enrich_base(self, event: NormalizedErrorEvent) -> LogBundle:
         """基础日志补全（原有逻辑）"""
         query_key = event.query_key or "default_error_context"
+        template = None
         try:
             template = self._registry.get(query_key)
         except KeyError:
@@ -89,6 +90,12 @@ class LogEnricher:
                         records=[],
                         raw=None,
                     )
+            else:
+                return LogBundle(
+                    query_key=query_key,
+                    records=[],
+                    raw=None,
+                )
 
         start = event.timestamp - timedelta(seconds=self._cfg.time_window_seconds)
         end = event.timestamp + timedelta(seconds=self._cfg.time_window_seconds)
@@ -98,7 +105,7 @@ class LogEnricher:
             "start_ts": int(start.timestamp()),
             "end_ts": int(end.timestamp()),
         }
-        query = template.render(params)
+        query = template.render(params) if template is not None else ""
         return await self._provider.query(
             query_key=query_key,
             query=query,
@@ -319,4 +326,3 @@ class LogEnricher:
             except Exception:
                 pass
         return None
-
