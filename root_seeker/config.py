@@ -48,7 +48,7 @@ class ZoektConfig(BaseModel):
 
 
 class WeComConfig(BaseModel):
-    webhook_url: HttpUrl
+    webhook_url: HttpUrl | None | str
     secret: str | None = Field(default=None, description="加签密钥，security_mode=sign 时必填（企微群机器人当前主要靠 key 鉴权）")
     security_mode: str = Field(
         default="ip",
@@ -57,7 +57,7 @@ class WeComConfig(BaseModel):
 
 
 class DingTalkConfig(BaseModel):
-    webhook_url: HttpUrl
+    webhook_url: HttpUrl | None | str
     secret: str | None = Field(default=None, description="加签密钥，security_mode=sign 时必填")
     security_mode: str = Field(
         default="sign",
