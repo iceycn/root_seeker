@@ -20,12 +20,13 @@ class QdrantConfig:
     url: str = "http://127.0.0.1:6333"
     api_key: str | None = None
     collection: str = "code_chunks"
+    timeout: int = 30
 
 
 class QdrantVectorStore:
     def __init__(self, cfg: QdrantConfig):
         self._cfg = cfg
-        self._client = QdrantClient(url=cfg.url, api_key=cfg.api_key)
+        self._client = QdrantClient(url=cfg.url, api_key=cfg.api_key, timeout=cfg.timeout)
 
     def ensure_collection(self, *, vector_size: int) -> None:
         if self._client.collection_exists(collection_name=self._cfg.collection):
@@ -50,14 +51,14 @@ class QdrantVectorStore:
             conditions.append(
                 FieldCondition(key="repo_local_dir", match=MatchValue(value=repo_local_dir))
             )
-        self._client.delete_points(
+        self._client.delete(
             collection_name=self._cfg.collection,
             points_selector=FilterSelector(filter=Filter(must=conditions)),
         )
 
     def delete_points_by_service(self, *, service_name: str) -> None:
         """删除指定服务的所有向量点（用于全量重置）。"""
-        self._client.delete_points(
+        self._client.delete(
             collection_name=self._cfg.collection,
             points_selector=FilterSelector(
                 filter=Filter(
@@ -71,17 +72,20 @@ class QdrantVectorStore:
         if self._client.collection_exists(collection_name=self._cfg.collection):
             self._client.delete_collection(collection_name=self._cfg.collection)
 
-    def count_points_by_service(self, *, service_name: str) -> int:
-        """统计指定服务的向量点数，用于索引状态展示。"""
-        if not self._client.collection_exists(collection_name=self._cfg.collection):
-            return 0
-        result = self._client.count(
-            collection_name=self._cfg.collection,
-            count_filter=Filter(
-                must=[FieldCondition(key="service_name", match=MatchValue(value=service_name))]
-            ),
-        )
-        return result.count
+    def count_points_by_service(self, *, service_name: str) -> int | None:
+        """统计指定服务的向量点数，用于索引状态展示。超时或异常时返回 None，避免误报为 0。"""
+        try:
+            if not self._client.collection_exists(collection_name=self._cfg.collection):
+                return 0
+            result = self._client.count(
+                collection_name=self._cfg.collection,
+                count_filter=Filter(
+                    must=[FieldCondition(key="service_name", match=MatchValue(value=service_name))]
+                ),
+            )
+            return result.count
+        except Exception:
+            return None
 
     def search(
         self,
@@ -101,4 +105,3 @@ class QdrantVectorStore:
         for h in response.points:
             out.append({"score": float(h.score), "payload": h.payload or {}})
         return out
-

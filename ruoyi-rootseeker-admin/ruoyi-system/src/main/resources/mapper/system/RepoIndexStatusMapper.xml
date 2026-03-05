@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.RepoIndexStatusMapper">
+    <resultMap type="com.ruoyi.system.domain.RepoIndexStatus" id="RepoIndexStatusResult">
+        <id property="serviceName" column="service_name"/>
+        <result property="qdrantStatus" column="qdrant_status"/>
+        <result property="qdrantCount" column="qdrant_count"/>
+        <result property="zoektStatus" column="zoekt_status"/>
+        <result property="updatedAt" column="updated_at"/>
+    </resultMap>
+
+    <select id="selectByServiceName" resultMap="RepoIndexStatusResult">
+        select service_name, qdrant_status, qdrant_count, zoekt_status, updated_at
+        from repo_index_status where service_name = #{serviceName}
+    </select>
+
+    <select id="selectAll" resultMap="RepoIndexStatusResult">
+        select service_name, qdrant_status, qdrant_count, zoekt_status, updated_at
+        from repo_index_status
+    </select>
+
+    <insert id="insertOrUpdate" parameterType="com.ruoyi.system.domain.RepoIndexStatus">
+        insert into repo_index_status (service_name, qdrant_status, qdrant_count, zoekt_status)
+        values (#{serviceName}, #{qdrantStatus}, #{qdrantCount}, #{zoektStatus})
+        on duplicate key update
+            qdrant_status = values(qdrant_status),
+            qdrant_count = values(qdrant_count),
+            zoekt_status = values(zoekt_status)
+    </insert>
+
+    <update id="updateQdrantStatus">
+        insert into repo_index_status (service_name, qdrant_status, qdrant_count, zoekt_status)
+        values (#{serviceName}, #{qdrantStatus}, 0, '未索引')
+        on duplicate key update qdrant_status = #{qdrantStatus}
+    </update>
+    <update id="updateZoektStatus">
+        insert into repo_index_status (service_name, qdrant_status, qdrant_count, zoekt_status)
+        values (#{serviceName}, '未索引', 0, #{zoektStatus})
+        on duplicate key update zoekt_status = #{zoektStatus}
+    </update>
+    <update id="updateBothStatus">
+        insert into repo_index_status (service_name, qdrant_status, qdrant_count, zoekt_status)
+        values (#{serviceName}, #{qdrantStatus}, 0, #{zoektStatus})
+        on duplicate key update qdrant_status = #{qdrantStatus}, zoekt_status = #{zoektStatus}
+    </update>
+
+    <update id="updateQdrantFromCallback">
+        update repo_index_status set qdrant_status = #{qdrantStatus}, qdrant_count = #{qdrantCount}
+        where service_name = #{serviceName}
+    </update>
+
+    <update id="updateZoektFromCallback">
+        update repo_index_status set zoekt_status = #{zoektStatus}
+        where service_name = #{serviceName}
+    </update>
+</mapper>

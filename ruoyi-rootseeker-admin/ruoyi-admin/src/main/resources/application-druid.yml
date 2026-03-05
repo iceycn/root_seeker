@@ -1,12 +1,13 @@
 # 数据源配置（RootSeeker Admin 自有配置，不跨项目读取）
 # 可通过环境变量覆盖：MYSQL_HOST、MYSQL_PORT、MYSQL_USERNAME、MYSQL_PASSWORD、MYSQL_DATABASE
+# 默认端口 3306（本地 MySQL），远程请设置 MYSQL_HOST、MYSQL_PORT
 spring:
     datasource:
         type: com.alibaba.druid.pool.DruidDataSource
         driverClassName: com.mysql.cj.jdbc.Driver
         druid:
             master:
-                url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:root_seeker}?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&zeroDateTimeBehavior=convertToNull&useSSL=true&serverTimezone=GMT%2B8
+                url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:root_seeker}?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&zeroDateTimeBehavior=convertToNull&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=GMT%2B8
                 username: ${MYSQL_USERNAME:root}
                 password: ${MYSQL_PASSWORD:password}
             # 从库数据源

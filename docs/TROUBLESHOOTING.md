@@ -1,0 +1,86 @@
+# 常见问题排查（Runbook）
+
+本页面向开发与运维，按“现象 → 定位 → 处理”整理常见问题。优先使用脚本与健康检查定位，再看日志。
+
+## 1. 先做三件事（最省时间）
+
+1. 确认服务是否在本机监听端口（LISTEN）
+2. 看日志目录 `logs/`（一键脚本）或 Docker `docker compose logs -f`（注意日志默认追加，优先关注最近一次启动时间附近的内容）
+3. 调健康检查接口：RootSeeker `GET /healthz`
+
+## 2. 一键脚本相关
+
+### 2.1 启动卡住或重复启动
+
+- 定位：查看是否有残留脚本进程仍在运行（终端里看到 `start-all-one-click.sh`/`restart-all-one-click.sh`）
+- 处理：先执行 `bash scripts/stop-all-one-click.sh`，再重新 `bash scripts/start-all-one-click.sh`
+
+### 2.2 “端口被占用”但你觉得没有
+
+- 说明：脚本只检测“本机 LISTEN”，不把到远端端口的连接（ESTABLISHED）当作占用
+- 定位：用 `lsof -nP -iTCP:<port> -sTCP:LISTEN` 看是否真的被监听
+- 处理：若确实有 LISTEN 进程，占用端口的进程不是本项目时，先停掉该进程或修改端口配置
+
+## 3. RootSeeker（8000）问题
+
+### 3.1 /healthz 不通
+
+- 定位：
+  - 是否监听 8000
+  - 查看 `logs/root-seeker.log`
+- 处理：
+  - 配置错误：对照 `config.example.yaml` 与 [CONFIG_CHECKLIST.md](CONFIG_CHECKLIST.md)
+  - 依赖不可达：先关闭对应 enricher/retriever 或修复 Zoekt/Qdrant/SLS/LLM 配置
+
+## 4. RootSeeker Admin（8080/8088）问题
+
+### 4.1 页面打不开或一直 502/空白
+
+- 定位：
+  - 是否监听 Admin 端口（本机默认 8080，Docker 默认 8088）
+  - 查看 `logs/root-seeker-admin.log`（本机脚本）或 `docker compose logs -f root-seeker-admin`
+- 处理：优先确认 MySQL 是否可连接（见 4.2）
+
+### 4.2 MySQL 连接失败（Access denied / Communications link failure）
+
+- 现象：日志出现 `SQLException`、`Access denied for user`
+- 定位：
+  - 本机：Admin 默认连接 `localhost:3306/root_seeker`（除非你显式设置环境变量）
+  - Docker：MySQL 容器端口为 3306，宿主机映射 3307
+- 处理：
+  - 本机：准备 MySQL 并按 [README_ROOTSEEKER.md](../ruoyi-rootseeker-admin/README_ROOTSEEKER.md) 初始化数据库与表
+  - Docker：确认容器启动完成；首次启动会自动执行初始化 SQL
+
+## 5. 索引/回调链路问题
+
+### 5.1 Admin 上索引状态不刷新
+
+- 定位：
+  - 确认 Admin 回调地址配置正确：`root.seeker.adminCallbackUrl`
+  - 参考回调 URL 模板：`http://<admin_host>:<admin_port>/gitsource/index/callback`
+  - 查看 RootSeeker 日志中是否有回调发送记录（如有实现）
+- 处理：
+  - 手动执行 `scripts/add-admin-callback-url.sql`（或在 Admin 页面填写回调地址）
+  - 详细对接协议见 [callback-integration.md](callback-integration.md)
+
+### 5.2 “同步失败：Unknown column 'qdrant_status'”
+
+- 现象：日志或页面报错 `Unknown column 'qdrant_status'` / `Unknown column 'zoekt_status'`
+- 原因：数据库仍是旧表结构（`repo_index_status` 只有 `qdrant_indexed/qdrant_indexing` 等字段），但当前 Admin 代码已读取单字段状态（`qdrant_status/zoekt_status`）
+- 处理：执行迁移脚本 `scripts/migrations/004_repo_index_status_single_field.sql`（或运行 `python3 scripts/run-migration.py`）
+
+## 6. Zoekt/Qdrant 问题
+
+### 6.1 Zoekt 能打开但搜不到代码
+
+- 定位：索引目录是否存在，仓库是否已同步并建索引
+- 处理：执行 `bash scripts/index-zoekt-all.sh` 或在 Admin 中触发 Zoekt 索引
+
+### 6.2 Qdrant 启动了但检索为空
+
+- 定位：是否已对仓库建向量索引（`POST /index/repo/{service_name}`）
+- 处理：先同步仓库再触发索引；也可以执行 `scripts/index-all-repos.py`
+
+## 7. 端口总览
+
+端口与访问地址统一见 [PORTS_AND_ENDPOINTS.md](PORTS_AND_ENDPOINTS.md)。

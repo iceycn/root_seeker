@@ -95,25 +95,32 @@ class ZoektClient:
 
     async def list_indexed_repos(self) -> set[str] | None:
         """
-        获取已索引的仓库名列表。部分 Zoekt 版本支持 /api/list，不支持时返回 None。
+        获取已索引的仓库名列表。使用 sourcegraph/zoekt 的 /api/list 接口（需 -rpc 启动）。
+        接口为 POST，请求体需包含 Q（如 r:.* 表示所有仓库），响应在 List.Repos 中。
         """
         try:
             url = f"{self._cfg.api_base_url.rstrip('/')}/api/list"
-            resp = await self._client.get(url)
+            payload = {"Q": "r:.*"}  # 匹配所有仓库的查询
+            resp = await self._client.post(url, json=payload)
             if resp.status_code != 200:
+                logger.warning(f"[ZoektClient] list 返回 {resp.status_code}: {resp.text[:200]}")
                 return None
             data = resp.json()
-            repos = data.get("Repos") or data.get("repos") or []
+            # 响应格式: {"List": {"Repos": [{"Repository": {"Name": "..."}, ...}, ...], ...}}
+            list_obj = data.get("List") or data.get("list") or {}
+            repos = list_obj.get("Repos") or list_obj.get("repos") or []
             names = set()
             for r in repos:
                 if isinstance(r, dict):
-                    n = r.get("Name") or r.get("name") or r.get("Repository") or ""
+                    repo_obj = r.get("Repository") or r.get("repository") or r
+                    n = repo_obj.get("Name") or repo_obj.get("name") or ""
                     if n:
                         names.add(str(n))
                 elif isinstance(r, str):
                     names.add(r)
             return names
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[ZoektClient] list_indexed_repos 失败: {e}")
             return None
 
     async def aclose(self) -> None:

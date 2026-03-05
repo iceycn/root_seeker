@@ -12,6 +12,7 @@ class IngestEvent(BaseModel):
     query_key: str = Field(default="default_error_context", description="SQL 模板 key，默认使用 default_error_context")
     timestamp: datetime | None = None
     tags: dict[str, Any] = Field(default_factory=dict)
+    repo_id: str | None = Field(default=None, description="关联的 git_source_repos.id，用于日志与仓库关联")
 
 
 class NormalizedErrorEvent(BaseModel):
@@ -20,6 +21,7 @@ class NormalizedErrorEvent(BaseModel):
     query_key: str
     timestamp: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
     tags: dict[str, Any] = Field(default_factory=dict)
+    repo_id: str | None = Field(default=None, description="关联的 git_source_repos.id")
 
 
 class LogRecord(BaseModel):

@@ -46,7 +46,10 @@ mysql -h <host> -P <port> -u <user> -p root_seeker < sql/git_source_repos_add_co
    ```
    优先级：**sys_config 表配置 > application.yml**。
 
-3. **端口**：默认 80，可在 `application.yml` 的 `server.port` 修改。
+3. **端口**：默认 `8080`（一键启动脚本也默认使用 8080）。可通过以下方式修改：
+   - `application.yml` 的 `server.port`
+   - 启动参数或环境变量（例如 `SERVER_PORT=8080`、`--server.port=8080`）
+   - Docker 全栈部署默认对外暴露 `8088`（见 `root_seeker_docker/README.md`）
 
 ## 启动
 

@@ -27,6 +27,7 @@
 - **Qdrant**：用于代码向量检索，需先部署；本应用在「向量索引」与「分析检索」时访问。
 - **阿里云 SLS**：用于根据 `query_key` 拉取更多日志；需配置 AK/SK、project、logstore 及 SQL 模板。
 - **企业微信/钉钉**：分析完成后推送 Markdown 到群；配置 webhook 即可。
+- **RootSeeker Admin（可选）**：管理端（若依），用于仓库管理、索引触发、配置管理与回调链路；依赖 MySQL，并通过 HTTP 调用 RootSeeker。
 
 ## 2. 环境要求与一键启动
 
@@ -60,9 +61,10 @@
 | 1 | 准备目录与 Git 仓库 | 见下 | 为每个服务准备 `local_dir`，并确保可 clone/pull |
 | 2 | Zoekt | [01-zoekt.md](01-zoekt.md) | 部署 Zoekt 并对仓库建索引 |
 | 3 | Qdrant | [02-qdrant.md](02-qdrant.md) | 部署 Qdrant，无需预先建 collection（应用会按需创建） |
-| 4 | RootSeeker | [03-RootSeeker.md](03-RootSeeker.md) | 填写 config.yaml，启动应用 |
-| 5 | 阿里云 SLS（可选） | [04-aliyun-sls.md](04-aliyun-sls.md) | 配置 AK/SK、project、logstore、sql_templates |
-| 6 | 企业微信/钉钉（可选） | [05-notifiers.md](05-notifiers.md) | 配置 webhook_url |
+| 4 | RootSeeker | [03-root-seeker.md](03-root-seeker.md) | 填写 config.yaml，启动应用 |
+| 5 | RootSeeker Admin + MySQL（可选） | [06-admin-mysql.md](06-admin-mysql.md) | 管理端与配置库；Docker 全栈默认启用 |
+| 6 | 阿里云 SLS（可选） | [04-aliyun-sls.md](04-aliyun-sls.md) | 配置 AK/SK、project、logstore、sql_templates |
+| 7 | 企业微信/钉钉（可选） | [05-notifiers.md](05-notifiers.md) | 配置 webhook_url |
 
 ## 4. 最小可运行配置（不接任何云）
 
@@ -82,6 +84,6 @@
 
 ## 6. 文档索引
 
-- 各组件傻瓜式步骤见：[01-zoekt](01-zoekt.md)、[02-qdrant](02-qdrant.md)、[03-RootSeeker](03-RootSeeker.md)、[04-aliyun-sls](04-aliyun-sls.md)、[05-notifiers](05-notifiers.md)。
+- 各组件傻瓜式步骤见：[01-zoekt](01-zoekt.md)、[02-qdrant](02-qdrant.md)、[03-root-seeker](03-root-seeker.md)、[06-admin-mysql](06-admin-mysql.md)、[04-aliyun-sls](04-aliyun-sls.md)、[05-notifiers](05-notifiers.md)。
 - 项目结构与优化建议见上级目录 [PROJECT_STRUCTURE.md](../PROJECT_STRUCTURE.md)、[OPTIMIZATION_CHECKLIST.md](../OPTIMIZATION_CHECKLIST.md)。
 - 设计与需求总览（含项目检查结论）见 [DESIGN_AND_REQUIREMENTS.md](../DESIGN_AND_REQUIREMENTS.md)；文档整合索引见 [DOCUMENTATION_INDEX.md](../DOCUMENTATION_INDEX.md)。

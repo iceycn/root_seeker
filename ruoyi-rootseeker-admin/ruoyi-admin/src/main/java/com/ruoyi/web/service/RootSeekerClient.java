@@ -1,5 +1,7 @@
 package com.ruoyi.web.service;
 
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -27,6 +29,7 @@ import com.ruoyi.web.config.RootSeekerConfig;
 public class RootSeekerClient {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final String CONFIG_KEY_BASE_URL = "root.seeker.baseUrl";
+    private static final String CONFIG_KEY_ADMIN_CALLBACK_URL = "root.seeker.adminCallbackUrl";
 
     @Autowired
     private RootSeekerConfig config;
@@ -39,6 +42,14 @@ public class RootSeekerClient {
     private String getBaseUrl() {
         String url = configService != null ? configService.getKey(CONFIG_KEY_BASE_URL) : null;
         return StringUtils.isNotEmpty(url) ? url.trim() : config.getBaseUrl();
+    }
+
+    /** 获取 Admin 回调地址，用于 RootSeeker 任务完成后通知。优先 sys_config，否则 yaml。未配置时返回 null */
+    private String getAdminCallbackUrl() {
+        String url = configService != null ? configService.getKey(CONFIG_KEY_ADMIN_CALLBACK_URL) : null;
+        if (StringUtils.isNotEmpty(url)) return url.trim();
+        url = config != null && config.getAdminCallbackUrl() != null ? config.getAdminCallbackUrl() : "";
+        return StringUtils.isNotEmpty(url) ? url.trim() : null;
     }
 
     /** 从 RootSeeker 4xx 响应中提取 detail 信息（FastAPI 格式：{"detail": "..."} 或 {"detail": [...]}） */
@@ -64,6 +75,15 @@ public class RootSeekerClient {
             headers.set("X-Api-Key", config.getApiKey());
         }
         return headers;
+    }
+
+    /** URL 编码，兼容 Java 8（encode(String, Charset) 需 Java 10+） */
+    private static String urlEncode(String s) {
+        try {
+            return URLEncoder.encode(s, "UTF-8");
+        } catch (UnsupportedEncodingException e) {
+            throw new RuntimeException("UTF-8 not supported", e);
+        }
     }
 
     /**
@@ -111,22 +131,46 @@ public class RootSeekerClient {
     }
 
     /**
-     * 同步所有已启用仓库
+     * 同步所有已启用仓库。callback_url 可选
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> syncRepos() {
-        String url = getBaseUrl() + "/git-source/sync";
+        String base = getBaseUrl() + "/git-source/sync";
+        String cb = getAdminCallbackUrl();
+        if (cb != null && !cb.isEmpty()) {
+            base += "?callback_url=" + urlEncode(cb);
+        }
         HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
-        ResponseEntity<Map> resp = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
+        ResponseEntity<Map> resp = restTemplate.exchange(base, HttpMethod.POST, entity, Map.class);
+        return resp.getBody() != null ? resp.getBody() : new HashMap<>();
+    }
+
+    /**
+     * 同步单个仓库（仓库同步：git clone/pull）。callback_url 可选，同步完成后 RootSeeker 可能触发后续索引入队并回调
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> syncSingleRepo(String serviceName) {
+        String encoded = serviceName != null ? serviceName.replace("/", "%2F") : "";
+        String base = getBaseUrl() + "/repos/sync?service_name=" + encoded;
+        String cb = getAdminCallbackUrl();
+        if (cb != null && !cb.isEmpty()) {
+            base += "&callback_url=" + urlEncode(cb);
+        }
+        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
+        ResponseEntity<Map> resp = restTemplate.exchange(base, HttpMethod.POST, entity, Map.class);
         return resp.getBody() != null ? resp.getBody() : new HashMap<>();
     }
 
     /**
      * 获取仓库详情（含分支列表）
+     * @param branchSearch 可选，分支搜索关键字，用于过滤分支列表
      */
     @SuppressWarnings("unchecked")
-    public Map<String, Object> getRepoDetail(String repoId) {
-        String url = getBaseUrl() + "/git-source/repos/" + repoId.replace("/", "%2F");
+    public Map<String, Object> getRepoDetail(String repoId, String branchSearch) {
+        String base = getBaseUrl() + "/git-source/repos/" + repoId.replace("/", "%2F");
+        String url = (branchSearch != null && !branchSearch.isEmpty())
+            ? base + "?branch_search=" + urlEncode(branchSearch)
+            : base;
         HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
         ResponseEntity<Map> resp = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
         return resp.getBody() != null ? resp.getBody() : new HashMap<>();
@@ -141,6 +185,10 @@ public class RootSeekerClient {
         Map<String, Object> body = new HashMap<>();
         body.put("branches", branches != null ? branches : Collections.emptyList());
         body.put("enabled", enabled);
+        String cb = getAdminCallbackUrl();
+        if (cb != null && !cb.isEmpty()) {
+            body.put("callback_url", cb);
+        }
         HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, createHeaders());
         ResponseEntity<Map> resp = restTemplate.exchange(url, HttpMethod.PUT, entity, Map.class);
         return resp.getBody() != null ? resp.getBody() : new HashMap<>();
@@ -230,51 +278,171 @@ public class RootSeekerClient {
         return resp.getBody() != null ? resp.getBody() : new HashMap<>();
     }
 
-    /** 为指定仓库建向量索引 */
+    /** 为指定仓库建向量索引。callback_url 可选，任务完成后 RootSeeker 会 POST 回调 */
     @SuppressWarnings("unchecked")
     public Map<String, Object> indexRepo(String serviceName, boolean incremental) {
-        String url = getBaseUrl() + "/index/repo/" + serviceName.replace("/", "%2F") + "?incremental=" + incremental;
-        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
-        ResponseEntity<Map> resp = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
-        return resp.getBody() != null ? resp.getBody() : new HashMap<>();
-    }
-
-    /** 清除指定仓库向量并重新全量索引 */
-    @SuppressWarnings("unchecked")
-    public Map<String, Object> resetRepoIndex(String serviceName) {
-        String url = getBaseUrl() + "/index/repo/" + serviceName.replace("/", "%2F") + "/reset";
-        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
-        ResponseEntity<Map> resp = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
-        return resp.getBody() != null ? resp.getBody() : new HashMap<>();
-    }
-
-    /** 清除指定仓库向量（仅清除，不重索引） */
-    @SuppressWarnings("unchecked")
-    public Map<String, Object> clearRepoIndex(String serviceName) {
-        String url = getBaseUrl() + "/index/repo/" + serviceName.replace("/", "%2F") + "/clear";
-        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
-        ResponseEntity<Map> resp = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
-        return resp.getBody() != null ? resp.getBody() : new HashMap<>();
-    }
-
-    /** 清除全部向量，可选重索引 */
-    @SuppressWarnings("unchecked")
-    public Map<String, Object> resetAllIndex(boolean reindex) {
-        String url = getBaseUrl() + "/index/reset-all?reindex=" + reindex;
-        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
-        ResponseEntity<Map> resp = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
-        return resp.getBody() != null ? resp.getBody() : new HashMap<>();
-    }
-
-    /** 全量重载：同步 + 清除向量 + 重索引，serviceName 可选 */
-    @SuppressWarnings("unchecked")
-    public Map<String, Object> fullReloadRepos(String serviceName) {
-        String url = getBaseUrl() + "/repos/full-reload";
-        if (serviceName != null && !serviceName.isEmpty()) {
-            url += "?service_name=" + serviceName.replace("/", "%2F");
+        String base = getBaseUrl() + "/index/repo/" + serviceName.replace("/", "%2F") + "?incremental=" + incremental;
+        String cb = getAdminCallbackUrl();
+        if (cb != null && !cb.isEmpty()) {
+            base += "&callback_url=" + urlEncode(cb);
         }
         HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
+        ResponseEntity<Map> resp = restTemplate.exchange(base, HttpMethod.POST, entity, Map.class);
+        return resp.getBody() != null ? resp.getBody() : new HashMap<>();
+    }
+
+    /** 清除指定仓库向量并重新全量索引。callback_url 可选 */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> resetRepoIndex(String serviceName) {
+        String base = getBaseUrl() + "/index/repo/" + serviceName.replace("/", "%2F") + "/reset";
+        String cb = getAdminCallbackUrl();
+        if (cb != null && !cb.isEmpty()) {
+            base += "?callback_url=" + urlEncode(cb);
+        }
+        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
+        ResponseEntity<Map> resp = restTemplate.exchange(base, HttpMethod.POST, entity, Map.class);
+        return resp.getBody() != null ? resp.getBody() : new HashMap<>();
+    }
+
+    /** 为指定仓库建 Zoekt 索引。callback_url 可选 */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> indexZoektRepo(String serviceName) {
+        String base = getBaseUrl() + "/index/zoekt/" + serviceName.replace("/", "%2F");
+        String cb = getAdminCallbackUrl();
+        if (cb != null && !cb.isEmpty()) {
+            base += "?callback_url=" + urlEncode(cb);
+        }
+        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
+        try {
+            ResponseEntity<Map> resp = restTemplate.exchange(base, HttpMethod.POST, entity, Map.class);
+            return resp.getBody() != null ? resp.getBody() : new HashMap<>();
+        } catch (HttpClientErrorException e) {
+            throw new RuntimeException(extractDetail(e), e);
+        }
+    }
+
+    /** 获取索引任务详情（含日志） */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getIndexJob(String jobId) {
+        String url = getBaseUrl() + "/index/job/" + (jobId != null ? jobId.replace("/", "%2F") : "");
+        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
+        try {
+            ResponseEntity<Map> resp = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+            return resp.getBody() != null ? resp.getBody() : new HashMap<>();
+        } catch (HttpClientErrorException e) {
+            throw new RuntimeException(extractDetail(e), e);
+        }
+    }
+
+    /** 获取索引队列列表（供 Admin 队列调度展示） */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getIndexQueue() {
+        String url = getBaseUrl() + "/index/queue";
+        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
+        try {
+            ResponseEntity<Map> resp = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+            return resp.getBody() != null ? resp.getBody() : new HashMap<>();
+        } catch (HttpClientErrorException e) {
+            throw new RuntimeException(extractDetail(e), e);
+        }
+    }
+
+    /** 清除指定仓库向量（仅清除，不重索引）。callback_url 可选 */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> clearRepoIndex(String serviceName) {
+        String base = getBaseUrl() + "/index/repo/" + serviceName.replace("/", "%2F") + "/clear";
+        String cb = getAdminCallbackUrl();
+        if (cb != null && !cb.isEmpty()) {
+            base += "?callback_url=" + urlEncode(cb);
+        }
+        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
+        ResponseEntity<Map> resp = restTemplate.exchange(base, HttpMethod.POST, entity, Map.class);
+        return resp.getBody() != null ? resp.getBody() : new HashMap<>();
+    }
+
+    /** 重新同步：先清除后添加，添加完成后触发依赖图重建。callback_url 可选 */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> resyncRepoIndex(String serviceName) {
+        String base = getBaseUrl() + "/index/repo/" + serviceName.replace("/", "%2F") + "/resync";
+        String cb = getAdminCallbackUrl();
+        if (cb != null && !cb.isEmpty()) {
+            base += "?callback_url=" + urlEncode(cb);
+        }
+        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
+        ResponseEntity<Map> resp = restTemplate.exchange(base, HttpMethod.POST, entity, Map.class);
+        return resp.getBody() != null ? resp.getBody() : new HashMap<>();
+    }
+
+    /** 清除全部向量，可选重索引。callback_url 可选 */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> resetAllIndex(boolean reindex) {
+        String base = getBaseUrl() + "/index/reset-all?reindex=" + reindex;
+        String cb = getAdminCallbackUrl();
+        if (cb != null && !cb.isEmpty()) {
+            base += "&callback_url=" + urlEncode(cb);
+        }
+        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
+        ResponseEntity<Map> resp = restTemplate.exchange(base, HttpMethod.POST, entity, Map.class);
+        return resp.getBody() != null ? resp.getBody() : new HashMap<>();
+    }
+
+    /** 全量重载：同步 + 清除向量 + 重索引，serviceName 可选。callback_url 可选 */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> fullReloadRepos(String serviceName) {
+        StringBuilder sb = new StringBuilder(getBaseUrl()).append("/repos/full-reload");
+        java.util.List<String> params = new java.util.ArrayList<>();
+        if (serviceName != null && !serviceName.isEmpty()) {
+            params.add("service_name=" + serviceName.replace("/", "%2F"));
+        }
+        String cb = getAdminCallbackUrl();
+        if (cb != null && !cb.isEmpty()) {
+            params.add("callback_url=" + urlEncode(cb));
+        }
+        if (!params.isEmpty()) {
+            sb.append("?").append(String.join("&", params));
+        }
+        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
+        ResponseEntity<Map> resp = restTemplate.exchange(sb.toString(), HttpMethod.POST, entity, Map.class);
+        return resp.getBody() != null ? resp.getBody() : new HashMap<>();
+    }
+
+    /**
+     * 获取仓库列表（config.repos + git_source 已启用），供异常测试等项目选择。配置模式使用。
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getReposList() {
+        String url = getBaseUrl() + "/repos/list";
+        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
+        ResponseEntity<Map> resp = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+        return resp.getBody() != null ? resp.getBody() : new HashMap<>();
+    }
+
+    /**
+     * 提交错误日志到 RootSeeker 分析（POST /ingest）
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> ingest(Map<String, Object> event) {
+        String url = getBaseUrl() + "/ingest";
+        HttpEntity<Map<String, Object>> entity = new HttpEntity<>(event != null ? event : new HashMap<>(), createHeaders());
         ResponseEntity<Map> resp = restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
         return resp.getBody() != null ? resp.getBody() : new HashMap<>();
+    }
+
+    /**
+     * 根据 analysis_id 查询分析结果或状态（GET /analysis/{analysis_id}）
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getAnalysis(String analysisId) {
+        if (analysisId == null || analysisId.isEmpty()) {
+            throw new IllegalArgumentException("analysis_id 不能为空");
+        }
+        String url = getBaseUrl() + "/analysis/" + analysisId.replace("/", "%2F");
+        HttpEntity<Void> entity = new HttpEntity<>(createHeaders());
+        try {
+            ResponseEntity<Map> resp = restTemplate.exchange(url, HttpMethod.GET, entity, Map.class);
+            return resp.getBody() != null ? resp.getBody() : new HashMap<>();
+        } catch (HttpClientErrorException e) {
+            throw new RuntimeException(extractDetail(e), e);
+        }
     }
 }

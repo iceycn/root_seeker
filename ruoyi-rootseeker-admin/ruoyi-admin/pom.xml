@@ -81,6 +81,9 @@
                     <fork>true</fork>
                     <!-- 运行目录设为项目根目录 ruoyi-rootseeker-admin，日志、上传文件等均在此下 -->
                     <workingDirectory>${project.parent.basedir}</workingDirectory>
+                    <!-- 不在此配置 environmentVariables，避免 env 未设置时 Maven 传空字符串导致连接失败。
+                         MySQL 配置由 application-druid.yml 的 ${MYSQL_HOST:localhost} 默认值处理；
+                         通过脚本启动时由脚本 env 传入，直接 mvn run 时继承环境或使用默认值。 -->
                 </configuration>
                 <executions>
                     <execution>

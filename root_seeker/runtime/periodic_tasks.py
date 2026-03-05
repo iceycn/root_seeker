@@ -12,6 +12,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Callable
 
 from root_seeker.config import AppConfig, RepoConfig
 from root_seeker.services.repo_mirror import RepoMirror, RepoSyncResult
@@ -35,7 +36,7 @@ class PeriodicTaskConfig:
 
 class PeriodicTaskService:
     """定时任务服务：定期同步仓库并更新向量索引"""
-    
+
     def __init__(
         self,
         *,
@@ -44,12 +45,20 @@ class PeriodicTaskService:
         repo_mirror: RepoMirror,
         vector_indexer: VectorIndexer | None = None,
         index_semaphore: asyncio.Semaphore | None = None,
+        index_queue: object | None = None,
+        on_repos_updated: Callable[[str | None], None] | None = None,
+        on_repo_sync_completed: Callable[[RepoSyncResult, str | None], None] | None = None,
+        on_qdrant_index_completed: Callable[[str, str, int, str | None], None] | None = None,
     ):
         self._cfg = cfg
         self._repos = repos
         self._repo_mirror = repo_mirror
         self._vector_indexer = vector_indexer
         self._index_semaphore = index_semaphore or asyncio.Semaphore(1)
+        self._index_queue = index_queue
+        self._on_repos_updated = on_repos_updated
+        self._on_repo_sync_completed = on_repo_sync_completed
+        self._on_qdrant_index_completed = on_qdrant_index_completed
         self._sync_task: asyncio.Task | None = None
         self._index_task: asyncio.Task | None = None
         self._running = False
@@ -138,7 +147,14 @@ class PeriodicTaskService:
         if not self._repos:
             logger.debug("[PeriodicTaskService] 没有配置仓库，跳过同步")
             return
-        
+
+        correlation_id = None
+        try:
+            from root_seeker.events import new_correlation_id
+            correlation_id = new_correlation_id()
+        except Exception:
+            pass
+
         sem = asyncio.Semaphore(self._cfg.auto_sync_concurrency)
         
         async def _sync_one(repo: RepoConfig) -> tuple[str, RepoSyncResult]:
@@ -159,8 +175,14 @@ class PeriodicTaskService:
                 error_count += 1
                 logger.error(f"[PeriodicTaskService] 仓库同步异常：{result}", exc_info=True)
                 continue
-            
+
             service_name, sync_result = result
+            if self._on_repo_sync_completed:
+                try:
+                    self._on_repo_sync_completed(sync_result, correlation_id)
+                except Exception as e:
+                    logger.warning("[PeriodicTaskService] 仓库同步完成回调失败：%s", e)
+
             if sync_result.status == "updated":
                 success_count += 1
                 updated_repos.append(service_name)
@@ -186,25 +208,41 @@ class PeriodicTaskService:
             f"[PeriodicTaskService] 仓库同步完成，成功={success_count}, 失败={error_count}, "
             f"有更新={len(updated_repos)}, 无变更={no_change_count}"
         )
-        
+
         # 如果启用自动索引且同步后有更新，只为有变更的仓库触发向量索引更新
+        # 当使用 index_queue 时，由 QdrantIndexSyncReceiver 接收 RepoSyncCompletedEvent 后入队，此处跳过
         if (
             self._cfg.auto_index_enabled
             and self._cfg.auto_index_after_sync
             and updated_repos
             and self._vector_indexer is not None
+            and self._index_queue is None
         ):
             # updated_status: updated=git pull 有变更（可增量）; cloned=新克隆（需全量）
             logger.info(
                 f"[PeriodicTaskService] 检测到 {len(updated_repos)} 个仓库有变更，开始自动触发向量索引更新"
             )
-            asyncio.create_task(self._index_repos(updated_repos, updated_status))
+            asyncio.create_task(
+                self._index_repos(updated_repos, updated_status, correlation_id)
+            )
+        elif updated_repos and self._index_queue is not None:
+            logger.info(
+                f"[PeriodicTaskService] 检测到 {len(updated_repos)} 个仓库有变更，"
+                "由 QdrantIndexSyncReceiver 接收仓库同步事件后入队"
+            )
         elif updated_repos:
             logger.debug(
                 f"[PeriodicTaskService] 检测到 {len(updated_repos)} 个仓库有变更，"
                 f"但自动索引未启用（auto_index_enabled={self._cfg.auto_index_enabled}, "
                 f"auto_index_after_sync={self._cfg.auto_index_after_sync}）"
             )
+
+        # 仓库有变更时触发服务依赖图重建（入队串行执行）
+        if updated_repos and self._on_repos_updated:
+            try:
+                self._on_repos_updated(correlation_id)
+            except Exception as e:
+                logger.warning("[PeriodicTaskService] 触发服务依赖图重建失败：%s", e)
     
     async def _index_all_repos(self) -> None:
         """为所有仓库更新向量索引"""
@@ -217,22 +255,25 @@ class PeriodicTaskService:
             return
         
         repo_names = [r.service_name for r in self._repos]
-        await self._index_repos(repo_names, updated_status=None)  # 全量，非 sync 触发
+        await self._index_repos(
+            repo_names, updated_status=None, correlation_id=None
+        )  # 全量，非 sync 触发
     
     async def _index_repos(
         self,
         service_names: list[str],
         updated_status: dict[str, str] | None = None,
+        correlation_id: str | None = None,
     ) -> None:
         """为指定的服务更新向量索引。updated_status 为 sync 结果，用于决定是否增量索引。"""
         if self._vector_indexer is None:
             logger.warning("[PeriodicTaskService] 向量索引器未配置，跳过索引更新")
             return
-        
+
         if not service_names:
             logger.debug("[PeriodicTaskService] 没有需要索引的服务，跳过")
             return
-        
+
         status_map = updated_status or {}
         logger.info(f"[PeriodicTaskService] 开始为 {len(service_names)} 个服务更新向量索引")
         
@@ -264,6 +305,13 @@ class PeriodicTaskService:
                     )
                 logger.info(f"[PeriodicTaskService] 仓库索引完成：{service_name}, 索引块数={count}")
                 success_count += 1
+                if self._on_qdrant_index_completed:
+                    try:
+                        self._on_qdrant_index_completed(
+                            service_name, repo.local_dir, count, correlation_id
+                        )
+                    except Exception as cb_e:
+                        logger.warning("[PeriodicTaskService] Qdrant 索引完成回调失败：%s", cb_e)
             except Exception as e:
                 error_count += 1
                 logger.error(

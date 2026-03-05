@@ -62,6 +62,17 @@
 | created_at | DATETIME | |
 | extra | JSON | 扩展字段 |
 
+**repo_index_status**（由 RootSeeker 回调更新）
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| service_name | VARCHAR(255) | 主键，与 full_name.replace("/","-") 一致 |
+| qdrant_status | VARCHAR(20) | 未索引/索引中/已索引/清理中 |
+| qdrant_count | INT | Qdrant 向量点数 |
+| zoekt_status | VARCHAR(20) | 未索引/索引中/已索引/清理中 |
+| updated_at | DATETIME | 最后更新时间 |
+
+迁移：`scripts/migrations/004_repo_index_status_single_field.sql`
+
 ### 3.2 职责划分
 
 | 操作 | 执行方 | 实现方式 |
@@ -71,6 +82,12 @@
 | 仓库启用/禁用、分支选择 | RuoYi | 直接更新 `git_source_repos` |
 | 同步到本地（git clone/pull） | RootSeeker | RuoYi 调用 `POST /git-source/sync` |
 | 获取分支列表 | RootSeeker | RuoYi 调用 `GET /git-source/repos/{id}?branch_search=xxx` |
+| 索引状态展示 | RuoYi | 读 `repo_index_status`，由 RootSeeker 回调更新 |
+| 索引/清除操作 | 先改本地状态 | RuoYi 调用 RootSeeker 接口，回调到达后更新最终状态 |
+
+### 3.3 索引状态乐观更新
+
+启用/禁用、索引、清除等操作时，RuoYi **先更新 `repo_index_status` 为「索引中」或「清理中」**，再调 RootSeeker 接口。RootSeeker 任务完成后 POST 回调，RuoYi 更新为「已索引」或「未索引」。详见 [callback-integration.md](callback-integration.md)。
 
 ---
 
@@ -121,6 +138,10 @@ spring:
 | `/git-source/repos/{id}` | GET | 获取仓库详情与分支 |
 | `/git-source/repos/{id}` | PUT | 配置分支、启用/禁用 |
 | `/git-source/sync` | POST | 同步所有已启用仓库 |
+| `/index/status` | GET | RootSeeker 返回各仓库实时索引状态（sync 用） |
+| `/index/repo/{name}` | POST | 建 Qdrant 索引 |
+| `/index/repo/{name}/clear` | POST | 清除 Qdrant+Zoekt 索引 |
+| `/index/repo/{name}/resync` | POST | 清除后重新索引 |
 
 ### 5.2 鉴权
 

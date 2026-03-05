@@ -67,14 +67,73 @@ from root_seeker.storage.analysis_store import AnalysisStore
 from root_seeker.storage.audit_log import AuditLogger
 from root_seeker.storage.status_store import StatusStore
 from root_seeker.storage.db_status_store import save_status_to_db
-from root_seeker.events import AnalysisEventBus, LogListener, NotifierCompletionListener
+from root_seeker.events import (
+    AnalysisEventBus,
+    GraphRebuildCompletedEvent,
+    GraphRebuildCompletedEventBus,
+    GraphRebuildCompletedLogListener,
+    GraphRebuildEventBus,
+    GraphRebuildLogListener,
+    GraphRebuildQueuedEvent,
+    QdrantIndexRemovedEvent,
+    QdrantIndexRemovedEventBus,
+    QdrantIndexRemovedLogListener,
+    QdrantIndexSyncReceiver,
+    QdrantRemoveReceiver,
+    RepoSyncCompletedToRequestSyncBridge,
+    RepoIndexSyncEvent,
+    RepoIndexSyncEventBus,
+    RepoIndexSyncLogListener,
+    RequestFullReloadEvent,
+    RequestFullReloadEventBus,
+    RequestFullReloadLogListener,
+    RequestRemoveRepoEvent,
+    RequestRemoveRepoEventBus,
+    RequestRemoveRepoLogListener,
+    RequestResyncRepoEvent,
+    RequestResyncRepoEventBus,
+    RequestResyncRepoLogListener,
+    ResyncCompletedEvent,
+    ResyncReceiver,
+    ResyncCompletedEventBus,
+    ResyncCompletedLogListener,
+    RequestResetAllEvent,
+    RequestResetAllEventBus,
+    RequestResetAllLogListener,
+    RequestSyncRepoEvent,
+    RequestSyncRepoEventBus,
+    RequestSyncRepoLogListener,
+    LogListener,
+    new_correlation_id,
+    NotifierCompletionListener,
+    QdrantIndexCompletedEvent,
+    QdrantIndexEventBus,
+    QdrantIndexLogListener,
+    RepoSyncCompletedEvent,
+    RepoSyncEventBus,
+    RepoSyncLogListener,
+    ZoektIndexCompletedEvent,
+    ZoektIndexCompletedEventBus,
+    ZoektIndexLogListener,
+    ZoektIndexRemovedEvent,
+    ZoektIndexRemovedEventBus,
+    ZoektIndexRemovedLogListener,
+    ZoektIndexSyncReceiver,
+    ZoektRemoveReceiver,
+)
 from root_seeker.runtime.job_queue import Job, JobQueue
 from root_seeker.runtime.periodic_tasks import PeriodicTaskConfig, PeriodicTaskService
+from root_seeker.runtime.graph_rebuild_queue import GraphRebuildQueue
 from root_seeker.security import build_api_key_dependency
 from root_seeker.services.repo_mirror import RepoMirror, RepoSyncResult
 from root_seeker.services.log_clusterer import LogClusterer
 from root_seeker.ingest import parse_ingest_body, parse_log_list, to_normalized_event
 from root_seeker.git_source import GitSourceService, create_storage_from_config
+from root_seeker.indexing.queue import (
+    IndexTaskStatus,
+    IndexTaskType,
+    InMemoryIndexingQueue,
+)
 
 
 def create_app() -> FastAPI:
@@ -86,6 +145,26 @@ def create_app() -> FastAPI:
     
     app = FastAPI(title="RootSeeker", version="0.1.0")
 
+    def _dedup_repos(repos: list[RepoConfig]) -> list[RepoConfig]:
+        seen: dict[str, RepoConfig] = {}
+        for r in repos:
+            sn = (r.service_name or "").strip()
+            if not sn:
+                continue
+            prev = seen.get(sn)
+            if prev is None:
+                seen[sn] = r
+                continue
+            if prev.local_dir == r.local_dir and prev.git_url == r.git_url:
+                continue
+            app_logger.warning(
+                "[App] 仓库 service_name 重复，保留第一条并忽略后续: service_name=%s local_dir=%s ignored_local_dir=%s",
+                sn,
+                prev.local_dir,
+                r.local_dir,
+            )
+        return list(seen.values())
+
     # 提前初始化 git_source 以合并仓库到 catalog（用于分析与索引）
     git_source_service: GitSourceService | None = None
     repos_for_catalog = list(cfg.repos)
@@ -95,7 +174,7 @@ def create_app() -> FastAPI:
         storage = create_storage_from_config(storage_config)
         git_source_service = GitSourceService(storage=storage, repos_base_dir=repos_base)
         git_repos = git_source_service.get_enabled_repos_as_config()
-        repos_for_catalog = list(cfg.repos) + git_repos
+        repos_for_catalog = _dedup_repos(list(cfg.repos) + git_repos)
         app_logger.info("[App] Git 仓库发现服务已启用")
 
     catalog = RepoCatalog(repos=repos_for_catalog)
@@ -230,7 +309,12 @@ def create_app() -> FastAPI:
                 FastEmbedConfig(model_name=model_name, cache_dir=cfg.embedding.cache_dir)
             )
         qstore = QdrantVectorStore(
-            QdrantConfig(url=cfg.qdrant.url, api_key=cfg.qdrant.api_key, collection=cfg.qdrant.collection)
+            QdrantConfig(
+                url=cfg.qdrant.url,
+                api_key=cfg.qdrant.api_key,
+                collection=cfg.qdrant.collection,
+                timeout=getattr(cfg.qdrant, "timeout", 30),
+            )
         )
         vector = VectorRetriever(cfg=VectorSearchConfig(top_k=12), embedder=embedder, store=qstore)
 
@@ -279,8 +363,50 @@ def create_app() -> FastAPI:
     if notifiers:
         event_bus.add_listener(NotifierCompletionListener(notifiers))
 
+    repoSyncEventBus = RepoSyncEventBus()
+    repoSyncEventBus.add_listener(RepoSyncLogListener())
+
+    qdrantIndexEventBus = QdrantIndexEventBus()
+    qdrantIndexEventBus.add_listener(QdrantIndexLogListener())
+
+    graphRebuildEventBus = GraphRebuildEventBus()
+    graphRebuildEventBus.add_listener(GraphRebuildLogListener())
+
+    repoIndexSyncEventBus = RepoIndexSyncEventBus()
+    repoIndexSyncEventBus.add_listener(RepoIndexSyncLogListener())
+
+    requestSyncRepoEventBus = RequestSyncRepoEventBus()
+    requestSyncRepoEventBus.add_listener(RequestSyncRepoLogListener())
+
+    requestRemoveRepoEventBus = RequestRemoveRepoEventBus()
+    requestRemoveRepoEventBus.add_listener(RequestRemoveRepoLogListener())
+
+    requestResyncRepoEventBus = RequestResyncRepoEventBus()
+    requestResyncRepoEventBus.add_listener(RequestResyncRepoLogListener())
+
+    resyncCompletedEventBus = ResyncCompletedEventBus()
+    resyncCompletedEventBus.add_listener(ResyncCompletedLogListener())
+
+    requestResetAllEventBus = RequestResetAllEventBus()
+    requestResetAllEventBus.add_listener(RequestResetAllLogListener())
+
+    requestFullReloadEventBus = RequestFullReloadEventBus()
+    requestFullReloadEventBus.add_listener(RequestFullReloadLogListener())
+
+    qdrantIndexRemovedEventBus = QdrantIndexRemovedEventBus()
+    qdrantIndexRemovedEventBus.add_listener(QdrantIndexRemovedLogListener())
+
+    zoektIndexRemovedEventBus = ZoektIndexRemovedEventBus()
+    zoektIndexRemovedEventBus.add_listener(ZoektIndexRemovedLogListener())
+
+    zoektIndexEventBus = ZoektIndexCompletedEventBus()
+    zoektIndexEventBus.add_listener(ZoektIndexLogListener())
+
+    graphRebuildCompletedEventBus = GraphRebuildCompletedEventBus()
+    graphRebuildCompletedEventBus.add_listener(GraphRebuildCompletedLogListener())
+
     config_db = get_config_db()
-    def _db_status_sync(st, service_name):
+    def _db_status_sync(st, service_name, repo_id=None):
         if config_db:
             save_status_to_db(
                 host=config_db.get("host", "localhost"),
@@ -290,6 +416,7 @@ def create_app() -> FastAPI:
                 database=config_db.get("database", "root_seeker"),
                 status=st,
                 service_name=service_name,
+                repo_id=repo_id,
             )
     job_queue = JobQueue(
         analyzer=analyzer,
@@ -313,14 +440,576 @@ def create_app() -> FastAPI:
     repos_for_sync = list(cfg.repos)
     if git_source_service:
         git_repos = git_source_service.get_enabled_repos_as_config()
-        repos_for_sync = list(cfg.repos) + git_repos
+        repos_for_sync = _dedup_repos(list(cfg.repos) + git_repos)
         if git_repos:
             app_logger.info(f"[App] 已合并 {len(git_repos)} 个 Git 发现仓库到同步列表")
 
     index_semaphore = asyncio.Semaphore(cfg.auto_index_concurrency)
-    indexing_qdrant: set[str] = set()  # 正在索引的 service_name，用于 GET /index/status
-    indexing_zoekt: set[str] = set()   # 正在建 Zoekt 索引的 service_name
+    indexing_qdrant: set[str] = set()  # 同步索引（reset/full-reload）进行中的 service_name
     recently_indexed_zoekt: set[str] = set()  # 近期成功索引的 service_name（/api/list 不可用时作为回退）
+
+    # 索引队列（策略模式，默认内存队列）
+    index_queue: InMemoryIndexingQueue | None = None
+    if cfg.indexing_queue == "memory":
+        index_queue = InMemoryIndexingQueue(max_history=500)
+
+        async def _run_qdrant(task) -> None:
+            candidates = router.route(task.service_name)
+            if not candidates:
+                task.status = IndexTaskStatus.FAILED
+                task.error = "service_name not mapped"
+                return
+            repo = candidates[0]
+            extra = task.result if isinstance(task.result, dict) else {}
+            incremental = extra.get("incremental", False)
+            skip_if_already_indexed = extra.get("skip_if_already_indexed", False)
+            correlation_id = extra.get("correlation_id")
+            app_logger.info(
+                "[IndexQueue] 队列被消费，开始处理 Qdrant 索引 job_id=%s service=%s",
+                task.job_id,
+                task.service_name,
+            )
+            # no_change 且 Qdrant 已有索引：跳过索引，打印日志并回调
+            if skip_if_already_indexed and qstore is not None:
+                try:
+                    count = await asyncio.wait_for(
+                        asyncio.to_thread(qstore.count_points_by_service, service_name=task.service_name),
+                        timeout=15.0,
+                    )
+                    if count > 0:
+                        app_logger.info(
+                            "[IndexQueue] 仓库已索引，跳过索引并回调 service=%s count=%d",
+                            task.service_name,
+                            count,
+                        )
+                        task.result = count
+                        task.status = IndexTaskStatus.COMPLETED
+                        task.append_log(f"仓库已索引（块数={count}），跳过并回调")
+                        qdrantIndexEventBus.emit(
+                            QdrantIndexCompletedEvent(
+                                service_name=task.service_name,
+                                repo_local_dir=repo.local_dir,
+                                indexed_chunks=count,
+                                status="completed",
+                                correlation_id=correlation_id,
+                                callback_url=task.callback_url,
+                            )
+                        )
+                        return
+                except (asyncio.TimeoutError, Exception) as e:
+                    app_logger.warning("[IndexQueue] 检查已索引失败，继续执行索引: %s", e)
+
+            task.append_log(f"索引仓库 {repo.local_dir}")
+
+            try:
+                async with index_semaphore:
+                    count = await vector_indexer.index_repo(
+                        repo_local_dir=repo.local_dir,
+                        service_name=task.service_name,
+                        incremental=incremental,
+                    )
+                task.result = count
+                task.status = IndexTaskStatus.COMPLETED
+                task.append_log(f"完成，索引块数={count}")
+                qdrantIndexEventBus.emit(
+                    QdrantIndexCompletedEvent(
+                        service_name=task.service_name,
+                        repo_local_dir=repo.local_dir,
+                        indexed_chunks=count,
+                        status="completed",
+                        correlation_id=correlation_id,
+                        callback_url=task.callback_url,
+                    )
+                )
+            except Exception as e:
+                task.status = IndexTaskStatus.FAILED
+                task.error = str(e)
+                task.append_log(f"失败: {e}")
+                qdrantIndexEventBus.emit(
+                    QdrantIndexCompletedEvent(
+                        service_name=task.service_name,
+                        repo_local_dir=repo.local_dir,
+                        indexed_chunks=0,
+                        status="failed",
+                        error=str(e),
+                        correlation_id=correlation_id,
+                        callback_url=task.callback_url,
+                    )
+                )
+
+        async def _run_zoekt(task) -> None:
+            import shutil
+            import tempfile
+            candidates = router.route(task.service_name)
+            if not candidates:
+                task.status = IndexTaskStatus.FAILED
+                task.error = "service_name not mapped"
+                return
+            repo = candidates[0]
+            extra = task.result if isinstance(task.result, dict) else {}
+            skip_if_already_indexed = extra.get("skip_if_already_indexed", False)
+            correlation_id = extra.get("correlation_id")
+            index_dir = data_dir / "zoekt" / "index"
+            # no_change 且 Zoekt 已有索引：跳过索引，打印日志并回调
+            if skip_if_already_indexed and index_dir.exists():
+                has_index = any(
+                    task.service_name in p.name
+                    for p in index_dir.iterdir()
+                    if p.is_file()
+                )
+                if has_index:
+                    app_logger.info(
+                        "[IndexQueue] 仓库已索引（Zoekt），跳过索引并回调 service=%s",
+                        task.service_name,
+                    )
+                    task.result = "Zoekt 索引完成"
+                    task.status = IndexTaskStatus.COMPLETED
+                    task.append_log("仓库已索引，跳过并回调")
+                    zoektIndexEventBus.emit(
+                        ZoektIndexCompletedEvent(
+                            service_name=task.service_name,
+                            repo_local_dir=repo.local_dir,
+                            status="completed",
+                            correlation_id=correlation_id,
+                            callback_url=task.callback_url,
+                        )
+                    )
+                    return
+            zoekt_index = shutil.which("zoekt-index")
+            if not zoekt_index:
+                gobin = os.environ.get("GOPATH", "")
+                if gobin:
+                    cand = Path(gobin) / "bin" / "zoekt-index"
+                    if cand.exists():
+                        zoekt_index = str(cand)
+                if not zoekt_index:
+                    for base in (Path.home() / "go", Path("/usr/local/go")):
+                        cand = base / "bin" / "zoekt-index"
+                        if cand.exists():
+                            zoekt_index = str(cand)
+                            break
+            if not zoekt_index or not Path(zoekt_index).exists():
+                task.status = IndexTaskStatus.FAILED
+                task.error = "zoekt-index 未找到"
+                return
+            index_dir.mkdir(parents=True, exist_ok=True)
+            index_target = Path(repo.local_dir).resolve()
+            tmpdir_cleanup: Path | None = None
+            if index_target.name != task.service_name:
+                tmpdir_cleanup = Path(tempfile.mkdtemp(prefix="zoekt-index-"))
+                try:
+                    link_path = tmpdir_cleanup / task.service_name
+                    link_path.symlink_to(index_target)
+                    index_target = link_path
+                except OSError:
+                    if tmpdir_cleanup.exists():
+                        shutil.rmtree(tmpdir_cleanup, ignore_errors=True)
+                    task.status = IndexTaskStatus.FAILED
+                    task.error = f"无法创建符号链接"
+                    return
+            try:
+                task.append_log(f"执行 zoekt-index -index {index_dir} {index_target}")
+                proc = await asyncio.create_subprocess_exec(
+                    zoekt_index,
+                    "-index", str(index_dir),
+                    str(index_target),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+                if stdout:
+                    for line in stdout.decode("utf-8", errors="replace").strip().splitlines():
+                        task.append_log(line)
+                if stderr:
+                    for line in stderr.decode("utf-8", errors="replace").strip().splitlines():
+                        task.append_log(f"[stderr] {line}")
+                if proc.returncode != 0:
+                    task.status = IndexTaskStatus.FAILED
+                    task.error = (stderr or stdout or b"").decode("utf-8", errors="replace").strip()[:500]
+                    return
+                recently_indexed_zoekt.add(task.service_name)
+                task.result = "Zoekt 索引完成"
+                task.status = IndexTaskStatus.COMPLETED
+                task.append_log("完成")
+                zoektIndexEventBus.emit(
+                    ZoektIndexCompletedEvent(
+                        service_name=task.service_name,
+                        repo_local_dir=repo.local_dir,
+                        status="completed",
+                        correlation_id=correlation_id,
+                        callback_url=task.callback_url,
+                    )
+                )
+            except asyncio.TimeoutError:
+                task.status = IndexTaskStatus.FAILED
+                task.error = "zoekt-index 超时"
+            finally:
+                if tmpdir_cleanup is not None and tmpdir_cleanup.exists():
+                    shutil.rmtree(tmpdir_cleanup, ignore_errors=True)
+
+        async def _run_remove_qdrant(task) -> None:
+            extra = task.result if isinstance(task.result, dict) else {}
+            correlation_id = extra.get("correlation_id")
+            app_logger.info(
+                "[IndexQueue] 队列被消费，开始处理 Qdrant 移除 job_id=%s service=%s",
+                task.job_id,
+                task.service_name,
+            )
+            # 若 Qdrant 未索引该仓库：跳过清除，打印日志并回调
+            if qstore is not None:
+                try:
+                    count = await asyncio.wait_for(
+                        asyncio.to_thread(qstore.count_points_by_service, service_name=task.service_name),
+                        timeout=15.0,
+                    )
+                    if count == 0:
+                        app_logger.info(
+                            "[IndexQueue] 仓库未索引（Qdrant），跳过清除并回调 service=%s",
+                            task.service_name,
+                        )
+                        task.status = IndexTaskStatus.COMPLETED
+                        task.append_log("仓库未索引，跳过清除并回调")
+                        qdrantIndexRemovedEventBus.emit(
+                            QdrantIndexRemovedEvent(
+                                service_name=task.service_name,
+                                status="completed",
+                                correlation_id=correlation_id,
+                                callback_url=task.callback_url,
+                            )
+                        )
+                        return
+                except (asyncio.TimeoutError, Exception) as e:
+                    app_logger.warning("[IndexQueue] 检查 Qdrant 索引失败，继续执行清除: %s", e)
+            try:
+                await asyncio.to_thread(qstore.delete_points_by_service, service_name=task.service_name)
+                task.status = IndexTaskStatus.COMPLETED
+                task.append_log("完成")
+                qdrantIndexRemovedEventBus.emit(
+                    QdrantIndexRemovedEvent(
+                        service_name=task.service_name,
+                        status="completed",
+                        correlation_id=correlation_id,
+                        callback_url=task.callback_url,
+                    )
+                )
+            except Exception as e:
+                task.status = IndexTaskStatus.FAILED
+                task.error = str(e)
+                task.append_log(f"失败: {e}")
+                qdrantIndexRemovedEventBus.emit(
+                    QdrantIndexRemovedEvent(
+                        service_name=task.service_name,
+                        status="failed",
+                        error=str(e),
+                        correlation_id=correlation_id,
+                        callback_url=task.callback_url,
+                    )
+                )
+
+        async def _run_remove_zoekt(task) -> None:
+            import glob
+            extra = task.result if isinstance(task.result, dict) else {}
+            correlation_id = extra.get("correlation_id")
+            app_logger.info(
+                "[IndexQueue] 队列被消费，开始处理 Zoekt 移除 job_id=%s service=%s",
+                task.job_id,
+                task.service_name,
+            )
+            zoekt_index_dir = data_dir / "zoekt" / "index"
+            # 若 Zoekt 未索引该仓库：跳过清除，打印日志并回调
+            has_index = (
+                zoekt_index_dir.exists()
+                and any(
+                    p.is_file() and task.service_name in p.name
+                    for p in zoekt_index_dir.iterdir()
+                )
+            )
+            if not has_index:
+                    app_logger.info(
+                        "[IndexQueue] 仓库未索引（Zoekt），跳过清除并回调 service=%s",
+                        task.service_name,
+                    )
+                    task.status = IndexTaskStatus.COMPLETED
+                    task.append_log("仓库未索引，跳过清除并回调")
+                    zoektIndexRemovedEventBus.emit(
+                        ZoektIndexRemovedEvent(
+                            service_name=task.service_name,
+                            status="completed",
+                            correlation_id=correlation_id,
+                            callback_url=task.callback_url,
+                        )
+                    )
+                    return
+            try:
+                if zoekt_index_dir.exists():
+                    for f in glob.glob(str(zoekt_index_dir / "*")):
+                        p = Path(f)
+                        if p.is_file() and task.service_name in p.name:
+                            p.unlink(missing_ok=True)
+                recently_indexed_zoekt.discard(task.service_name)
+                task.status = IndexTaskStatus.COMPLETED
+                task.append_log("完成")
+                zoektIndexRemovedEventBus.emit(
+                    ZoektIndexRemovedEvent(
+                        service_name=task.service_name,
+                        status="completed",
+                        correlation_id=correlation_id,
+                        callback_url=task.callback_url,
+                    )
+                )
+            except Exception as e:
+                task.status = IndexTaskStatus.FAILED
+                task.error = str(e)
+                task.append_log(f"失败: {e}")
+                zoektIndexRemovedEventBus.emit(
+                    ZoektIndexRemovedEvent(
+                        service_name=task.service_name,
+                        status="failed",
+                        error=str(e),
+                        correlation_id=correlation_id,
+                        callback_url=task.callback_url,
+                    )
+                )
+
+        repoSyncEventBus.add_listener(
+            RepoSyncCompletedToRequestSyncBridge(request_sync_repo_event_bus=requestSyncRepoEventBus)
+        )
+        requestSyncRepoEventBus.add_listener(
+            QdrantIndexSyncReceiver(
+                index_queue=index_queue,
+                repo_index_sync_event_bus=repoIndexSyncEventBus,
+            )
+        )
+        requestSyncRepoEventBus.add_listener(
+            ZoektIndexSyncReceiver(
+                index_queue=index_queue,
+                repo_index_sync_event_bus=repoIndexSyncEventBus,
+            )
+        )
+
+    def _get_repos_for_graph():
+        repos = list(cfg.repos)
+        if git_source_service:
+            repos = repos + git_source_service.get_enabled_repos_as_config()
+        return _dedup_repos(repos)
+
+    def _on_graph_rebuild_queued(event_id: str, correlation_id: str | None) -> None:
+        graphRebuildEventBus.emit(
+            GraphRebuildQueuedEvent(event_id=event_id, correlation_id=correlation_id)
+        )
+
+    def _on_graph_rebuild_completed(edge_count: int, correlation_id: str | None) -> None:
+        graphRebuildCompletedEventBus.emit(
+            GraphRebuildCompletedEvent(edge_count=edge_count, correlation_id=correlation_id)
+        )
+
+    graph_rebuild_queue = GraphRebuildQueue(
+        graph_path=graph_path,
+        get_repos=_get_repos_for_graph,
+        on_queued=_on_graph_rebuild_queued,
+        on_completed=_on_graph_rebuild_completed,
+    )
+
+    def _schedule_graph_rebuild(correlation_id: str | None = None) -> None:
+        graph_rebuild_queue.schedule_rebuild(correlation_id=correlation_id)
+
+    def _on_qdrant_index_then_rebuild(event: QdrantIndexCompletedEvent) -> None:
+        """Qdrant 索引完成后触发依赖图重建。"""
+        if event.status != "completed":
+            return
+        _schedule_graph_rebuild(correlation_id=event.correlation_id)
+
+    def _on_qdrant_removed_then_rebuild(event: QdrantIndexRemovedEvent) -> None:
+        """Qdrant 索引移除完成后触发依赖图重建。"""
+        _schedule_graph_rebuild(correlation_id=event.correlation_id)
+
+    resync_receiver = ResyncReceiver(
+        index_queue=index_queue,
+        resync_completed_event_bus=resyncCompletedEventBus,
+    )
+    requestResyncRepoEventBus.add_listener(resync_receiver)
+
+    from root_seeker.events import IndexCallbackTrigger
+    callback_trigger = IndexCallbackTrigger()
+    qdrantIndexEventBus.add_listener(callback_trigger)
+    zoektIndexEventBus.add_listener(callback_trigger)
+    qdrantIndexRemovedEventBus.add_listener(callback_trigger)
+    zoektIndexRemovedEventBus.add_listener(callback_trigger)
+    resyncCompletedEventBus.add_listener(callback_trigger)
+    qdrantIndexEventBus.add_listener(_on_qdrant_index_then_rebuild)
+    qdrantIndexRemovedEventBus.add_listener(_on_qdrant_removed_then_rebuild)
+
+    if qstore is not None:
+        requestRemoveRepoEventBus.add_listener(
+            QdrantRemoveReceiver(
+                qstore=qstore,
+                qdrant_index_removed_event_bus=qdrantIndexRemovedEventBus,
+                index_queue=index_queue,
+            )
+        )
+    zoekt_index_dir = data_dir / "zoekt" / "index"
+    requestRemoveRepoEventBus.add_listener(
+        ZoektRemoveReceiver(
+            zoekt_index_dir=zoekt_index_dir,
+            zoekt_index_removed_event_bus=zoektIndexRemovedEventBus,
+            index_queue=index_queue,
+        )
+    )
+
+    def _on_request_reset_all(event: RequestResetAllEvent) -> None:
+        if qstore is None:
+            return
+
+        def _do() -> None:
+            try:
+                qstore.delete_collection()
+                app_logger.info("[App] 已清除全部向量")
+                if event.reindex:
+                    for repo in repos_for_sync:
+                        requestSyncRepoEventBus.emit(
+                            RequestSyncRepoEvent(
+                                service_name=repo.service_name,
+                                task_types=["qdrant"],
+                                incremental=False,
+                                correlation_id=event.correlation_id,
+                                callback_url=event.callback_url,
+                            )
+                        )
+                    app_logger.info("[App] 已为 %d 个仓库入队索引", len(repos_for_sync))
+            except Exception as e:
+                app_logger.error("[App] 全量清除失败: %s", e, exc_info=True)
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, _do)
+        except RuntimeError:
+            _do()
+
+    requestResetAllEventBus.add_listener(_on_request_reset_all)
+
+    async def _run_resync(task) -> None:
+        """RESYNC 任务：单次执行内依次完成 清除→索引→依赖图重建。"""
+        import glob
+
+        extra = task.result if isinstance(task.result, dict) else {}
+        correlation_id = extra.get("correlation_id")
+        service_name = task.service_name
+        app_logger.info("[IndexQueue] 开始重新同步 job_id=%s service=%s", task.job_id, service_name)
+        task.append_log("步骤1：清除")
+        try:
+            if qstore is not None:
+                await asyncio.to_thread(qstore.delete_points_by_service, service_name=service_name)
+            zoekt_index_dir = data_dir / "zoekt" / "index"
+            if zoekt_index_dir.exists():
+                for f in glob.glob(str(zoekt_index_dir / "*")):
+                    p = Path(f)
+                    if p.is_file() and service_name in p.name:
+                        p.unlink(missing_ok=True)
+            recently_indexed_zoekt.discard(service_name)
+            task.append_log("步骤2：索引")
+            candidates = router.route(service_name)
+            if not candidates:
+                raise ValueError("service_name not mapped")
+            repo = candidates[0]
+            async with index_semaphore:
+                count = await vector_indexer.index_repo(
+                    repo_local_dir=repo.local_dir,
+                    service_name=service_name,
+                    incremental=False,
+                )
+            task.append_log("步骤3：依赖图重建")
+            repos = _get_repos_for_graph()
+            builder = ServiceGraphBuilder()
+            graph = builder.build(repos)
+            save_graph(graph, graph_path)
+            edge_count = len(graph.to_json())
+            _on_graph_rebuild_completed(edge_count, correlation_id)
+            task.result = count
+            task.status = IndexTaskStatus.COMPLETED
+            task.append_log("完成")
+            resyncCompletedEventBus.emit(
+                ResyncCompletedEvent(
+                    service_name=service_name,
+                    status="completed",
+                    correlation_id=correlation_id,
+                    indexed_chunks=count,
+                    callback_url=task.callback_url,
+                )
+            )
+        except Exception as e:
+            task.status = IndexTaskStatus.FAILED
+            task.error = str(e)
+            task.append_log(f"失败: {e}")
+            resyncCompletedEventBus.emit(
+                ResyncCompletedEvent(
+                    service_name=service_name,
+                    status="failed",
+                    correlation_id=correlation_id,
+                    error=str(e),
+                    callback_url=task.callback_url,
+                )
+            )
+            raise
+
+    index_queue.start_worker(
+        run_qdrant=_run_qdrant,
+        run_zoekt=_run_zoekt,
+        run_remove_qdrant=_run_remove_qdrant if qstore is not None else None,
+        run_remove_zoekt=_run_remove_zoekt,
+        run_resync=_run_resync if (qstore is not None and vector_indexer is not None) else None,
+    )
+    app_logger.info("[App] 索引队列 worker 已启动（memory）")
+
+    async def _run_full_reload(event: RequestFullReloadEvent) -> None:
+        """后台执行全量重载：同步仓库，再为每个仓库发出移除与索引入队事件。"""
+        service_names = event.service_names or [r.service_name for r in repos_for_sync]
+        repos = [r for r in repos_for_sync if r.service_name in service_names]
+        cid = event.correlation_id or new_correlation_id()
+        for repo in repos:
+            try:
+                sync_result = await repo_mirror.sync(repo)
+                repoSyncEventBus.emit(
+                    RepoSyncCompletedEvent(
+                        service_name=sync_result.service_name,
+                        local_dir=sync_result.local_dir,
+                        status=sync_result.status,
+                        detail=sync_result.detail,
+                        correlation_id=cid,
+                        callback_url=event.callback_url,
+                    )
+                )
+                requestRemoveRepoEventBus.emit(
+                    RequestRemoveRepoEvent(
+                        service_name=repo.service_name,
+                        task_types=["qdrant", "zoekt"],
+                        correlation_id=cid,
+                        callback_url=event.callback_url,
+                    )
+                )
+                requestSyncRepoEventBus.emit(
+                    RequestSyncRepoEvent(
+                        service_name=repo.service_name,
+                        task_types=["qdrant"],
+                        incremental=False,
+                        correlation_id=cid,
+                        callback_url=event.callback_url,
+                    )
+                )
+            except Exception as e:
+                app_logger.error(
+                    "[App] 全量重载同步失败：%s, %s", repo.service_name, e, exc_info=True
+                )
+        app_logger.info("[App] 全量重载已入队，repos=%d", len(repos))
+
+    def _on_request_full_reload(event: RequestFullReloadEvent) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+            asyncio.run_coroutine_threadsafe(_run_full_reload(event), loop)
+        except RuntimeError:
+            asyncio.run(_run_full_reload(event))
+
+    requestFullReloadEventBus.add_listener(_on_request_full_reload)
+
     periodic_task_service = PeriodicTaskService(
         cfg=PeriodicTaskConfig(
             periodic_tasks_enabled=cfg.periodic_tasks_enabled,
@@ -336,6 +1025,26 @@ def create_app() -> FastAPI:
         repo_mirror=repo_mirror,
         vector_indexer=vector_indexer,
         index_semaphore=index_semaphore,
+        index_queue=index_queue,
+        on_repos_updated=_schedule_graph_rebuild,
+        on_repo_sync_completed=lambda r, cid: repoSyncEventBus.emit(
+            RepoSyncCompletedEvent(
+                service_name=r.service_name,
+                local_dir=r.local_dir,
+                status=r.status,
+                detail=r.detail,
+                correlation_id=cid,
+            )
+        ),
+        on_qdrant_index_completed=lambda sn, local_dir, count, cid: qdrantIndexEventBus.emit(
+            QdrantIndexCompletedEvent(
+                service_name=sn,
+                repo_local_dir=local_dir,
+                indexed_chunks=count,
+                status="completed",
+                correlation_id=cid,
+            )
+        ),
     )
 
     def _enqueue_ingest_event(event: IngestEvent) -> str:
@@ -592,10 +1301,15 @@ def create_app() -> FastAPI:
                 raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}") from e
             branches = body.get("branches", [])
             enabled = body.get("enabled", True)
+            callback_url = body.get("callback_url")
+            cb = str(callback_url).strip() if callback_url and str(callback_url).strip() else None
             repo_id = _validate_repo_id(repo_id)
             updated = git_source_service.select_branches(repo_id, branches=branches, enabled=enabled)
             if not updated:
                 raise HTTPException(status_code=404, detail="repo not found")
+            new_repos = _dedup_repos(list(cfg.repos) + git_source_service.get_enabled_repos_as_config())
+            router.refresh_catalog(new_repos)
+            app_logger.info(f"[App] 仓库启用状态变更，已刷新 catalog，共 {len(new_repos)} 个仓库")
             sync_result = None
             if updated.enabled and updated.local_dir:
                 repo_config = next(
@@ -615,6 +1329,19 @@ def create_app() -> FastAPI:
             msg = "已加入分析工具"
             if sync_result:
                 msg = "已加入分析工具，已同步" if sync_result.status not in ("error",) else "已加入分析工具，同步失败"
+                cid = new_correlation_id()
+                repoSyncEventBus.emit(
+                    RepoSyncCompletedEvent(
+                        service_name=sync_result.service_name,
+                        local_dir=sync_result.local_dir,
+                        status=sync_result.status,
+                        detail=sync_result.detail,
+                        correlation_id=cid,
+                        callback_url=cb,
+                    )
+                )
+                if sync_result.status not in ("error",):
+                    _schedule_graph_rebuild(cid)
             return {
                 "status": "ok",
                 "message": msg,
@@ -631,11 +1358,16 @@ def create_app() -> FastAPI:
             }
 
         @app.post("/git-source/sync")
-        async def git_source_sync(_: None = Depends(require_api_key)) -> dict:
-            """同步已配置仓库到本地，供分析使用。"""
+        async def git_source_sync(
+            callback_url: str | None = None,
+            _: None = Depends(require_api_key),
+        ) -> dict:
+            """同步已配置仓库到本地，供分析使用。callback_url 可选。"""
+            cb = callback_url.strip() if callback_url and callback_url.strip() else None
             git_repos = git_source_service.get_enabled_repos_as_config()
             if not git_repos:
                 return {"status": "ok", "message": "无已配置的仓库", "results": []}
+            cid = new_correlation_id()
             sem = asyncio.Semaphore(8)
 
             async def _sync_one(repo):
@@ -648,13 +1380,26 @@ def create_app() -> FastAPI:
                     results.append({"status": "error", "detail": str(r)})
                 else:
                     results.append({"service_name": r.service_name, "status": r.status, "detail": r.detail})
+                    repoSyncEventBus.emit(
+                        RepoSyncCompletedEvent(
+                            service_name=r.service_name,
+                            local_dir=r.local_dir,
+                            status=r.status,
+                            detail=r.detail,
+                            correlation_id=cid,
+                            callback_url=cb,
+                        )
+                    )
+            success_count = sum(1 for x in results if isinstance(x, dict) and x.get("status") in ("updated", "cloned"))
+            if success_count > 0:
+                _schedule_graph_rebuild(cid)
             return {"status": "ok", "results": results}
 
         @app.post("/git-source/notify")
         async def git_source_notify(_: None = Depends(require_api_key)) -> dict:
             """仓库配置变更通知：若依等管理端在拉取/编辑/同步仓库后调用，RootSeeker 刷新 catalog。"""
             git_repos = git_source_service.get_enabled_repos_as_config()
-            new_repos = list(cfg.repos) + git_repos
+            new_repos = _dedup_repos(list(cfg.repos) + git_repos)
             router.refresh_catalog(new_repos)
             app_logger.info(f"[App] 收到仓库变更通知，已刷新 catalog，共 {len(new_repos)} 个仓库")
             return {"status": "ok", "message": "catalog refreshed", "repo_count": len(new_repos)}
@@ -791,6 +1536,20 @@ def create_app() -> FastAPI:
         out["status_display"] = {"pending": "待调度", "running": "解析中", "completed": "解析完成", "failed": "解析失败"}.get(status.status, status.status)
         return out
 
+    def _list_zoekt_indexed_from_disk(zoekt_index_dir: Path) -> set[str]:
+        """从索引目录扫描 .zoekt 文件获取已索引仓库名（/api/list 不可用时的回退）。"""
+        import re
+        names: set[str] = set()
+        if not zoekt_index_dir.exists():
+            return names
+        for f in zoekt_index_dir.iterdir():
+            if f.is_file() and f.suffix == ".zoekt" and "_v" in f.stem:
+                # 格式: repo_name_v16.00000.zoekt -> repo_name
+                m = re.match(r"^(.+)_v\d+\.\d+$", f.stem)
+                if m:
+                    names.add(m.group(1))
+        return names
+
     @app.get("/index/status")
     async def get_index_status(_: None = Depends(require_api_key)) -> dict[str, Any]:
         """
@@ -801,85 +1560,205 @@ def create_app() -> FastAPI:
         zoekt_repos: set[str] | None = None
         if zoekt is not None:
             zoekt_repos = await zoekt.list_indexed_repos()
-        result: list[dict[str, Any]] = []
+        zoekt_index_dir = data_dir / "zoekt" / "index"
+        if zoekt_repos is None and zoekt_index_dir.exists():
+            zoekt_repos = _list_zoekt_indexed_from_disk(zoekt_index_dir)
+        def _status_rank(s: str | None) -> int:
+            order = {"清理中": 3, "索引中": 2, "已索引": 1, "未索引": 0, "未知": -1}
+            return order.get(s or "未知", -1)
+
+        merged: dict[str, dict[str, Any]] = {}
         current_repos = router._catalog.repos
         for repo in current_repos:
             sn = repo.service_name
-            # Zoekt 索引的 repo 名可能为 service_name 或 local_dir 最后一段
             zoekt_name_candidates = {sn, Path(repo.local_dir).name}
-            qdrant_count = 0
+            qdrant_count: int | None = 0
+            qdrant_count_unknown = False
             if qstore is not None:
-                qdrant_count = await asyncio.to_thread(
-                    qstore.count_points_by_service, service_name=sn
-                )
+                try:
+                    qdrant_count = await asyncio.wait_for(
+                        asyncio.to_thread(qstore.count_points_by_service, service_name=sn),
+                        timeout=15.0,
+                    )
+                except (asyncio.TimeoutError, Exception) as e:
+                    app_logger.debug(f"[App] Qdrant count 超时/异常，service={sn}: {e}")
+                    qdrant_count = None
+            if qdrant_count is None:
+                qdrant_count_unknown = True
+            qdrant_task = index_queue.get_task_by_service(sn, IndexTaskType.QDRANT) if index_queue else None
+            zoekt_task = index_queue.get_task_by_service(sn, IndexTaskType.ZOEKT) if index_queue else None
+            qdrant_remove_task = index_queue.get_task_by_service(sn, IndexTaskType.REMOVE_QDRANT) if index_queue else None
+            zoekt_remove_task = index_queue.get_task_by_service(sn, IndexTaskType.REMOVE_ZOEKT) if index_queue else None
+            qdrant_indexing = (qdrant_task is not None and qdrant_task.status in (IndexTaskStatus.QUEUED, IndexTaskStatus.RUNNING)) or (sn in indexing_qdrant)
+            zoekt_indexing = zoekt_task is not None and zoekt_task.status in (IndexTaskStatus.QUEUED, IndexTaskStatus.RUNNING)
+            qdrant_removing = qdrant_remove_task is not None and qdrant_remove_task.status in (IndexTaskStatus.QUEUED, IndexTaskStatus.RUNNING)
+            zoekt_removing = zoekt_remove_task is not None and zoekt_remove_task.status in (IndexTaskStatus.QUEUED, IndexTaskStatus.RUNNING)
+            qdrant_indexed: bool | None
+            if qdrant_count_unknown:
+                qdrant_indexed = True if (qdrant_task and qdrant_task.status == IndexTaskStatus.COMPLETED) else None
+            else:
+                qdrant_indexed = (qdrant_count or 0) > 0
+            zoekt_indexed_val = (
+                bool(zoekt_name_candidates & (zoekt_repos or set()))
+                or (sn in recently_indexed_zoekt)
+                or (zoekt_task is not None and zoekt_task.status == IndexTaskStatus.COMPLETED)
+                if (zoekt_repos is not None or recently_indexed_zoekt or (zoekt_task and zoekt_task.status == IndexTaskStatus.COMPLETED))
+                else None
+            )
+            # 单字段状态：未索引|索引中|已索引|清理中
+            if qdrant_removing:
+                _qdrant_status = "清理中"
+            elif qdrant_indexing:
+                _qdrant_status = "索引中"
+            elif qdrant_indexed is None:
+                _qdrant_status = "未知"
+            else:
+                _qdrant_status = "已索引" if qdrant_indexed else "未索引"
+
+            if zoekt_removing:
+                _zoekt_status = "清理中"
+            elif zoekt_indexing:
+                _zoekt_status = "索引中"
+            elif zoekt_indexed_val is None:
+                _zoekt_status = "未知"
+            else:
+                _zoekt_status = "已索引" if zoekt_indexed_val else "未索引"
             item: dict[str, Any] = {
                 "service_name": sn,
-                "qdrant_indexed": qdrant_count > 0,
-                "qdrant_indexing": sn in indexing_qdrant,
+                "qdrant_status": _qdrant_status,
+                "qdrant_indexed": qdrant_indexed,
+                "qdrant_indexing": qdrant_indexing,
+                "qdrant_removing": qdrant_removing,
                 "qdrant_count": qdrant_count,
-                "zoekt_indexed": (
-                    bool(zoekt_name_candidates & (zoekt_repos or set()))
-                    or (sn in recently_indexed_zoekt)
-                    if (zoekt_repos is not None or recently_indexed_zoekt)
-                    else None
-                ),
-                "zoekt_indexing": sn in indexing_zoekt,
+                "qdrant_job_id": qdrant_task.job_id if qdrant_task else None,
+                "zoekt_status": _zoekt_status,
+                "zoekt_indexed": zoekt_indexed_val,
+                "zoekt_indexing": zoekt_indexing,
+                "zoekt_removing": zoekt_removing,
+                "zoekt_job_id": zoekt_task.job_id if zoekt_task else None,
             }
-            result.append(item)
-        return {"repos": result}
+            prev = merged.get(sn)
+            if prev is None:
+                merged[sn] = item
+                continue
+            if _status_rank(item.get("qdrant_status")) > _status_rank(prev.get("qdrant_status")):
+                prev["qdrant_status"] = item.get("qdrant_status")
+            if item.get("qdrant_count") is not None:
+                prev_count = prev.get("qdrant_count")
+                if prev_count is None or item["qdrant_count"] > prev_count:
+                    prev["qdrant_count"] = item["qdrant_count"]
+            if prev.get("qdrant_indexed") is None:
+                prev["qdrant_indexed"] = item.get("qdrant_indexed")
+            prev["qdrant_indexing"] = bool(prev.get("qdrant_indexing")) or bool(item.get("qdrant_indexing"))
+            prev["qdrant_removing"] = bool(prev.get("qdrant_removing")) or bool(item.get("qdrant_removing"))
+            prev["qdrant_job_id"] = prev.get("qdrant_job_id") or item.get("qdrant_job_id")
+
+            if _status_rank(item.get("zoekt_status")) > _status_rank(prev.get("zoekt_status")):
+                prev["zoekt_status"] = item.get("zoekt_status")
+            if prev.get("zoekt_indexed") is None:
+                prev["zoekt_indexed"] = item.get("zoekt_indexed")
+            prev["zoekt_indexing"] = bool(prev.get("zoekt_indexing")) or bool(item.get("zoekt_indexing"))
+            prev["zoekt_removing"] = bool(prev.get("zoekt_removing")) or bool(item.get("zoekt_removing"))
+            prev["zoekt_job_id"] = prev.get("zoekt_job_id") or item.get("zoekt_job_id")
+
+        return {"repos": list(merged.values())}
 
     @app.post("/index/repo/{service_name}")
     async def index_repo(
         service_name: str,
         incremental: bool = False,
+        callback_url: str | None = None,
         _: None = Depends(require_api_key),
-    ) -> dict[str, int | str]:
+    ) -> dict[str, Any]:
         """
-        为指定仓库建向量索引。
+        为指定仓库建向量索引。使用队列时立即返回 job_id，任务在后台执行。
         incremental=true：仅索引 git pull 后的变更文件（需 ORIG_HEAD 有效），否则全量。
+        callback_url：任务完成后 POST 回调，用于 Admin 更新 repo_index_status。
         """
-        # 安全验证：确保 service_name 格式正确（防止注入攻击）
         if not service_name or len(service_name) > 100 or not all(c.isalnum() or c in "-_./" for c in service_name):
             raise HTTPException(status_code=400, detail="Invalid service_name format")
         app_logger.info(f"[App] 收到仓库索引请求，service={service_name}, incremental={incremental}")
         if vector_indexer is None:
-            app_logger.warning("[App] 向量索引未配置")
             raise HTTPException(status_code=400, detail="vector indexing is not configured")
         candidates = router.route(service_name)
         if not candidates:
-            app_logger.warning(f"[App] 未找到 service_name={service_name} 对应的仓库")
             raise HTTPException(status_code=404, detail="service_name not mapped to any repo")
+        cid = new_correlation_id()
+        req_event = RequestSyncRepoEvent(
+            service_name=service_name,
+            task_types=["qdrant"],
+            incremental=incremental,
+            correlation_id=cid,
+            callback_url=callback_url.strip() if callback_url and callback_url.strip() else None,
+        )
+        requestSyncRepoEventBus.emit(req_event)
+        if index_queue is not None:
+            job_id = req_event.result.get("qdrant_job_id")
+            if job_id:
+                return {"status": "queued", "job_id": job_id, "message": "任务已入队，正在排队执行"}
         repo = candidates[0]
+        cb = req_event.callback_url
         try:
-            indexing_qdrant.add(service_name)
-            app_logger.info(f"[App] 开始索引仓库，service={service_name}, repo={repo.local_dir}")
             count = await vector_indexer.index_repo(
                 repo_local_dir=repo.local_dir,
                 service_name=service_name,
                 incremental=incremental,
             )
-            app_logger.info(f"[App] 仓库索引完成，service={service_name}, 索引块数={count}")
+            qdrantIndexEventBus.emit(
+                QdrantIndexCompletedEvent(
+                    service_name=service_name,
+                    repo_local_dir=repo.local_dir,
+                    indexed_chunks=count,
+                    status="completed",
+                    correlation_id=cid,
+                    callback_url=cb,
+                )
+            )
             return {"status": "ok", "indexed_chunks": count}
         except Exception as e:
+            qdrantIndexEventBus.emit(
+                QdrantIndexCompletedEvent(
+                    service_name=service_name,
+                    repo_local_dir=repo.local_dir,
+                    indexed_chunks=0,
+                    status="failed",
+                    error=str(e),
+                    correlation_id=cid,
+                    callback_url=cb,
+                )
+            )
             app_logger.error(f"[App] 仓库索引失败，service={service_name}, 错误={e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"index_repo failed: {e!s}")
-        finally:
-            indexing_qdrant.discard(service_name)
 
     @app.post("/index/zoekt/{service_name}")
     async def index_zoekt_repo(
         service_name: str,
+        callback_url: str | None = None,
         _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
-        """为指定仓库建 Zoekt 索引（运行 zoekt-index 子进程）。需安装 zoekt-index。"""
+        """为指定仓库建 Zoekt 索引。使用队列时立即返回 job_id，任务在后台执行。callback_url 可选。"""
         if not service_name or len(service_name) > 100 or not all(c.isalnum() or c in "-_./" for c in service_name):
             raise HTTPException(status_code=400, detail="Invalid service_name format")
         candidates = router.route(service_name)
         if not candidates:
             raise HTTPException(status_code=404, detail="service_name not mapped to any repo")
+        cid = new_correlation_id()
+        req_event = RequestSyncRepoEvent(
+            service_name=service_name,
+            task_types=["zoekt"],
+            correlation_id=cid,
+            callback_url=callback_url.strip() if callback_url and callback_url.strip() else None,
+        )
+        requestSyncRepoEventBus.emit(req_event)
+        if index_queue is not None:
+            job_id = req_event.result.get("zoekt_job_id")
+            if job_id:
+                return {"status": "queued", "job_id": job_id, "message": "任务已入队，正在排队执行"}
+        # 无队列时同步执行（兼容）
+        cb = req_event.callback_url
         repo = candidates[0]
         import shutil
-        import os
+        import tempfile
         zoekt_index = shutil.which("zoekt-index")
         if not zoekt_index:
             gobin = os.environ.get("GOPATH", "")
@@ -888,7 +1767,6 @@ def create_app() -> FastAPI:
                 if cand.exists():
                     zoekt_index = str(cand)
             if not zoekt_index:
-                # 默认 GOPATH=~/go，nohup 启动时可能未继承 GOPATH
                 for base in (Path.home() / "go", Path("/usr/local/go")):
                     cand = base / "bin" / "zoekt-index"
                     if cand.exists():
@@ -901,55 +1779,113 @@ def create_app() -> FastAPI:
                 )
         index_dir = data_dir / "zoekt" / "index"
         index_dir.mkdir(parents=True, exist_ok=True)
-        indexing_zoekt.add(service_name)
         tmpdir_cleanup: Path | None = None
         try:
-            # google/zoekt 无 -repo_name，repo 名取自路径最后一段；用临时符号链接确保与 service_name 一致
             index_target = Path(repo.local_dir).resolve()
             if index_target.name != service_name:
-                import tempfile
-                import shutil
                 tmpdir_cleanup = Path(tempfile.mkdtemp(prefix="zoekt-index-"))
-                try:
-                    link_path = tmpdir_cleanup / service_name
-                    link_path.symlink_to(index_target)
-                    index_target = link_path
-                except OSError:
-                    shutil.rmtree(tmpdir_cleanup, ignore_errors=True)
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"无法创建符号链接以设置 repo 名，请确保 local_dir 最后一段为 {service_name!r}",
-                    )
+                link_path = tmpdir_cleanup / service_name
+                link_path.symlink_to(index_target)
+                index_target = link_path
             proc = await asyncio.create_subprocess_exec(
-                zoekt_index,
-                "-index", str(index_dir),
-                str(index_target),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                zoekt_index, "-index", str(index_dir), str(index_target),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
             if proc.returncode != 0:
                 err = (stderr or stdout or b"").decode("utf-8", errors="replace").strip()
+                zoektIndexEventBus.emit(
+                    ZoektIndexCompletedEvent(
+                        service_name=service_name,
+                        repo_local_dir=repo.local_dir,
+                        status="failed",
+                        error=err,
+                        correlation_id=cid,
+                        callback_url=cb,
+                    )
+                )
                 raise HTTPException(status_code=500, detail=f"zoekt-index failed: {err}")
-            app_logger.info(f"[App] Zoekt 索引完成，service={service_name}")
             recently_indexed_zoekt.add(service_name)
-            return {"status": "ok", "message": "Zoekt 索引完成。zoekt-webserver 会定期检测索引目录，新索引通常会自动生效；若未生效可尝试重启 zoekt-webserver"}
+            zoektIndexEventBus.emit(
+                ZoektIndexCompletedEvent(
+                    service_name=service_name,
+                    repo_local_dir=repo.local_dir,
+                    status="completed",
+                    correlation_id=cid,
+                    callback_url=cb,
+                )
+            )
+            return {"status": "ok", "message": "Zoekt 索引完成"}
         except asyncio.TimeoutError:
+            zoektIndexEventBus.emit(
+                ZoektIndexCompletedEvent(
+                    service_name=service_name,
+                    repo_local_dir=repo.local_dir,
+                    status="failed",
+                    error="zoekt-index 超时",
+                    correlation_id=cid,
+                    callback_url=cb,
+                )
+            )
             raise HTTPException(status_code=500, detail="zoekt-index 超时")
         finally:
-            indexing_zoekt.discard(service_name)
             if tmpdir_cleanup is not None and tmpdir_cleanup.exists():
-                import shutil
                 shutil.rmtree(tmpdir_cleanup, ignore_errors=True)
+
+    @app.get("/index/job/{job_id}")
+    async def get_index_job(
+        job_id: str,
+        _: None = Depends(require_api_key),
+    ) -> dict[str, Any]:
+        """获取索引任务详情（含日志），供 Admin 队列展示与追踪。"""
+        if index_queue is None:
+            raise HTTPException(status_code=400, detail="索引队列未启用")
+        task = index_queue.get_task(job_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        return {
+            "job_id": task.job_id,
+            "service_name": task.service_name,
+            "task_type": task.task_type.value,
+            "status": task.status.value,
+            "logs": task.logs,
+            "result": task.result,
+            "error": task.error,
+            "created_at": task.created_at.isoformat() if task.created_at else None,
+            "started_at": task.started_at.isoformat() if task.started_at else None,
+            "finished_at": task.finished_at.isoformat() if task.finished_at else None,
+        }
+
+    @app.get("/index/queue")
+    async def get_index_queue(
+        _: None = Depends(require_api_key),
+    ) -> dict[str, Any]:
+        """获取索引队列列表（排队中、运行中、近期完成），供 Admin 队列调度展示。"""
+        if index_queue is None:
+            return {"jobs": [], "queue_type": "none"}
+        tasks = index_queue.get_all_tasks()
+        jobs = []
+        for t in tasks.values():
+            jobs.append({
+                "job_id": t.job_id,
+                "service_name": t.service_name,
+                "task_type": t.task_type.value,
+                "status": t.status.value,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+                "started_at": t.started_at.isoformat() if t.started_at else None,
+                "finished_at": t.finished_at.isoformat() if t.finished_at else None,
+            })
+        jobs.sort(key=lambda x: (x["created_at"] or ""), reverse=True)
+        return {"jobs": jobs[:100], "queue_type": "memory"}
 
     @app.post("/index/repo/{service_name}/reset")
     async def reset_repo_index(
         service_name: str,
+        callback_url: str | None = None,
         _: None = Depends(require_api_key),
     ) -> dict[str, int | str]:
         """
-        全量重置：清除该服务的向量索引，然后从头重新索引。
-        用于强制重新加载、修复索引损坏等场景。
+        全量重置：清除该服务的向量索引，然后从头重新索引。callback_url 可选。
         """
         if not service_name or len(service_name) > 100 or not all(c.isalnum() or c in "-_./" for c in service_name):
             raise HTTPException(status_code=400, detail="Invalid service_name format")
@@ -961,6 +1897,8 @@ def create_app() -> FastAPI:
         if not candidates:
             raise HTTPException(status_code=404, detail="service_name not mapped to any repo")
         repo = candidates[0]
+        cb = callback_url.strip() if callback_url and callback_url.strip() else None
+        cid = new_correlation_id()
         try:
             await asyncio.to_thread(qstore.delete_points_by_service, service_name=service_name)
             app_logger.info(f"[App] 已清除向量，开始重新索引：{service_name}")
@@ -973,87 +1911,120 @@ def create_app() -> FastAPI:
                         incremental=False,
                     )
                 app_logger.info(f"[App] 全量重置完成，service={service_name}, 索引块数={count}")
+                qdrantIndexEventBus.emit(
+                    QdrantIndexCompletedEvent(
+                        service_name=service_name,
+                        repo_local_dir=repo.local_dir,
+                        indexed_chunks=count,
+                        status="completed",
+                        correlation_id=cid,
+                        callback_url=cb,
+                    )
+                )
                 return {"status": "ok", "indexed_chunks": count}
             finally:
                 indexing_qdrant.discard(service_name)
         except Exception as e:
             indexing_qdrant.discard(service_name)
+            qdrantIndexEventBus.emit(
+                QdrantIndexCompletedEvent(
+                    service_name=service_name,
+                    repo_local_dir=repo.local_dir,
+                    indexed_chunks=0,
+                    status="failed",
+                    error=str(e),
+                    correlation_id=cid,
+                    callback_url=cb,
+                )
+            )
             app_logger.error(f"[App] 全量重置失败，service={service_name}, 错误={e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"reset failed: {e!s}")
 
     @app.post("/index/repo/{service_name}/clear")
     async def clear_repo_index(
         service_name: str,
+        callback_url: str | None = None,
         _: None = Depends(require_api_key),
     ) -> dict[str, str]:
-        """仅清除该服务的向量索引，不重索引。"""
+        """仅清除该服务的 Qdrant 与 Zoekt 索引，不重索引。callback_url 可选。"""
         if not service_name or len(service_name) > 100 or not all(c.isalnum() or c in "-_./" for c in service_name):
             raise HTTPException(status_code=400, detail="Invalid service_name format")
         if qstore is None:
             raise HTTPException(status_code=400, detail="vector indexing is not configured")
-        try:
-            await asyncio.to_thread(qstore.delete_points_by_service, service_name=service_name)
-            app_logger.info(f"[App] 已清除向量，service={service_name}")
-            return {"status": "ok", "message": "cleared"}
-        except Exception as e:
-            app_logger.error(f"[App] 清除失败，service={service_name}, 错误={e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"clear failed: {e!s}")
+        cid = new_correlation_id()
+        req_event = RequestRemoveRepoEvent(
+            service_name=service_name,
+            task_types=["qdrant", "zoekt"],
+            correlation_id=cid,
+            callback_url=callback_url.strip() if callback_url and callback_url.strip() else None,
+        )
+        requestRemoveRepoEventBus.emit(req_event)
+        recently_indexed_zoekt.discard(service_name)
+        app_logger.info(f"[App] 已请求移除索引，service={service_name}")
+        return {"status": "ok", "message": "cleared"}
+
+    @app.post("/index/repo/{service_name}/resync")
+    async def resync_repo_index(
+        service_name: str,
+        callback_url: str | None = None,
+        _: None = Depends(require_api_key),
+    ) -> dict[str, Any]:
+        """重新同步：先清除后添加，添加完成后触发依赖图重建。callback_url 可选。"""
+        if not service_name or len(service_name) > 100 or not all(c.isalnum() or c in "-_./" for c in service_name):
+            raise HTTPException(status_code=400, detail="Invalid service_name format")
+        if qstore is None:
+            raise HTTPException(status_code=400, detail="vector indexing is not configured")
+        if not router.route(service_name):
+            raise HTTPException(status_code=404, detail="service_name not mapped to any repo")
+        cid = new_correlation_id()
+        requestResyncRepoEventBus.emit(
+            RequestResyncRepoEvent(
+                service_name=service_name,
+                task_types=["qdrant", "zoekt"],
+                correlation_id=cid,
+                callback_url=callback_url.strip() if callback_url and callback_url.strip() else None,
+            )
+        )
+        recently_indexed_zoekt.discard(service_name)
+        app_logger.info(f"[App] 已请求重新同步，service={service_name}")
+        return {"status": "ok", "message": "已入队处理"}
 
     @app.post("/index/reset-all")
     async def reset_all_index(
         reindex: bool = False,
+        callback_url: str | None = None,
         _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
         """
-        强制清除全部向量索引。reindex=true 时清除后按仓库排队重新索引（受 auto_index_concurrency 限制）。
-        用于全量重建、修复损坏等场景。
+        强制清除全部向量索引。reindex=true 时清除后按仓库排队重新索引。callback_url 可选。
         """
         app_logger.info(f"[App] 收到全量清除请求，reindex={reindex}")
-        if vector_indexer is None or qstore is None:
+        if qstore is None:
             raise HTTPException(status_code=400, detail="vector indexing is not configured")
-        try:
-            await asyncio.to_thread(qstore.delete_collection)
-            app_logger.info("[App] 已清除全部向量")
-        except Exception as e:
-            app_logger.error(f"[App] 清除向量失败：{e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"reset-all failed: {e!s}")
-        if not reindex:
-            return {"status": "ok", "cleared": True, "indexed_chunks": 0}
-        errors: list[str] = []
-        indexed_count = 0
-        for repo in repos_for_sync:
-            try:
-                indexing_qdrant.add(repo.service_name)
-                try:
-                    async with index_semaphore:
-                        count = await vector_indexer.index_repo(
-                            repo_local_dir=repo.local_dir,
-                            service_name=repo.service_name,
-                            incremental=False,
-                        )
-                    indexed_count += count
-                    app_logger.info(f"[App] 仓库索引完成，service={repo.service_name}, 块数={count}")
-                finally:
-                    indexing_qdrant.discard(repo.service_name)
-            except Exception as e:
-                indexing_qdrant.discard(repo.service_name)
-                errors.append(f"{repo.service_name}: {e!s}")
-                app_logger.error(f"[App] 索引失败：{repo.service_name}, {e}", exc_info=True)
-        app_logger.info(f"[App] 全量重索引完成，indexed_chunks={indexed_count}, errors={len(errors)}")
-        return {"status": "ok", "cleared": True, "indexed_chunks": indexed_count, "errors": errors}
+        cid = new_correlation_id()
+        cb = callback_url.strip() if callback_url and callback_url.strip() else None
+        requestResetAllEventBus.emit(
+            RequestResetAllEvent(reindex=reindex, correlation_id=cid, callback_url=cb)
+        )
+        return {
+            "status": "ok",
+            "message": "已入队处理" if reindex else "已入队清除",
+            "cleared": True,
+            "indexed_chunks": 0,
+        }
 
     @app.post("/repos/full-reload")
     async def full_reload_repos(
         service_name: str | None = None,
+        callback_url: str | None = None,
         _: None = Depends(require_api_key),
     ) -> dict[str, Any]:
         """
-        全量重新加载：先同步仓库（git pull），再清除向量并从头索引。
-        service_name 可选，不传则对所有仓库执行。
-        按仓库排队加载，受 auto_index_concurrency 限制。
+        全量重新加载：发出事件后由接收器后台执行同步，再通过队列移除并重新索引。
+        service_name、callback_url 可选。
         """
         app_logger.info(f"[App] 收到全量重载请求，service_name={service_name or 'all'}")
-        if vector_indexer is None or qstore is None:
+        if qstore is None:
             raise HTTPException(status_code=400, detail="vector indexing is not configured")
         repos_to_process = repos_for_sync
         if service_name:
@@ -1063,40 +2034,21 @@ def create_app() -> FastAPI:
             if not repos_to_process:
                 raise HTTPException(status_code=404, detail="service_name not found")
         if not repos_to_process:
-            return {"status": "ok", "synced": 0, "indexed": 0, "errors": []}
-        errors: list[str] = []
-        synced_count = 0
-        indexed_count = 0
-        for repo in repos_to_process:
-            try:
-                sync_result = await repo_mirror.sync(repo)
-                if sync_result.status in ("updated", "cloned", "no_change"):
-                    synced_count += 1
-                else:
-                    errors.append(f"{repo.service_name}: sync {sync_result.status}")
-            except Exception as e:
-                errors.append(f"{repo.service_name}: sync error {e!s}")
-                continue
-        for repo in repos_to_process:
-            try:
-                await asyncio.to_thread(qstore.delete_points_by_service, service_name=repo.service_name)
-                indexing_qdrant.add(repo.service_name)
-                try:
-                    async with index_semaphore:
-                        count = await vector_indexer.index_repo(
-                            repo_local_dir=repo.local_dir,
-                            service_name=repo.service_name,
-                            incremental=False,
-                        )
-                    indexed_count += count
-                finally:
-                    indexing_qdrant.discard(repo.service_name)
-            except Exception as e:
-                indexing_qdrant.discard(repo.service_name)
-                errors.append(f"{repo.service_name}: index error {e!s}")
-                app_logger.error(f"[App] 全量重载索引失败：{repo.service_name}, {e}", exc_info=True)
-        app_logger.info(f"[App] 全量重载完成，synced={synced_count}, indexed_chunks={indexed_count}, errors={len(errors)}")
-        return {"status": "ok", "synced": synced_count, "indexed": indexed_count, "errors": errors}
+            return {"status": "ok", "message": "无仓库", "repos_queued": 0}
+        cid = new_correlation_id()
+        cb = callback_url.strip() if callback_url and callback_url.strip() else None
+        requestFullReloadEventBus.emit(
+            RequestFullReloadEvent(
+                service_names=[r.service_name for r in repos_to_process],
+                correlation_id=cid,
+                callback_url=cb,
+            )
+        )
+        return {
+            "status": "ok",
+            "message": "已入队处理",
+            "repos_queued": len(repos_to_process),
+        }
 
     @app.get("/graph")
     async def get_graph(_: None = Depends(require_api_key)) -> dict:
@@ -1148,10 +2100,13 @@ def create_app() -> FastAPI:
 
     @app.post("/repos/sync")
     async def sync_repos(
-        service_name: str | None = None, _: None = Depends(require_api_key)
+        service_name: str | None = None,
+        callback_url: str | None = None,
+        _: None = Depends(require_api_key),
     ) -> dict:
-        """同步仓库（含 config.repos 与 git_source 已启用仓库）。"""
+        """同步仓库（含 config.repos 与 git_source 已启用仓库）。callback_url 可选。"""
         app_logger.info(f"[App] 收到仓库同步请求，service={service_name or 'all'}")
+        cb = callback_url.strip() if callback_url and callback_url.strip() else None
         all_repos = repos_for_sync
         if service_name:
             matches = [r for r in all_repos if r.service_name == service_name or service_name in r.repo_aliases]
@@ -1162,6 +2117,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="no repos matched")
 
         app_logger.info(f"[App] 开始同步 {len(matches)} 个仓库")
+        cid = new_correlation_id()
         sem = asyncio.Semaphore(8)
 
         async def _one(r):
@@ -1174,7 +2130,20 @@ def create_app() -> FastAPI:
             out = [dataclasses.asdict(res) for _, res in results]
             success_count = len([r for _, r in results if r.status in ("updated", "cloned")])
             error_count = len([r for _, r in results if r.status == "error"])
+            for _, res in results:
+                repoSyncEventBus.emit(
+                    RepoSyncCompletedEvent(
+                        service_name=res.service_name,
+                        local_dir=res.local_dir,
+                        status=res.status,
+                        detail=res.detail,
+                        correlation_id=cid,
+                        callback_url=cb,
+                    )
+                )
             app_logger.info(f"[App] 仓库同步完成，成功={success_count}, 失败={error_count}")
+            if success_count > 0:
+                _schedule_graph_rebuild(cid)
             return {"status": "ok", "repos": out}
         except Exception as e:
             app_logger.error(f"[App] 仓库同步失败：{e}", exc_info=True)
@@ -1220,10 +2189,25 @@ def create_app() -> FastAPI:
         return status
 
     app.state.event_bus = event_bus
+    app.state.repo_sync_event_bus = repoSyncEventBus
+    app.state.qdrant_index_event_bus = qdrantIndexEventBus
+    app.state.graph_rebuild_event_bus = graphRebuildEventBus
+    app.state.repo_index_sync_event_bus = repoIndexSyncEventBus
+    app.state.request_sync_repo_event_bus = requestSyncRepoEventBus
+    app.state.request_remove_repo_event_bus = requestRemoveRepoEventBus
+    app.state.qdrant_index_removed_event_bus = qdrantIndexRemovedEventBus
+    app.state.zoekt_index_removed_event_bus = zoektIndexRemovedEventBus
+    app.state.zoekt_index_event_bus = zoektIndexEventBus
+    app.state.graph_rebuild_completed_event_bus = graphRebuildCompletedEventBus
+    app.state.request_reset_all_event_bus = requestResetAllEventBus
+    app.state.request_full_reload_event_bus = requestFullReloadEventBus
+    app.state.request_resync_repo_event_bus = requestResyncRepoEventBus
+    app.state.resync_completed_event_bus = resyncCompletedEventBus
 
     @app.on_event("startup")
     async def _startup() -> None:
         app_logger.info("[App] 应用启动中...")
+        await graph_rebuild_queue.start()
         await job_queue.start()
         await periodic_task_service.start()
         app_logger.info("[App] 应用启动完成")
@@ -1231,7 +2215,10 @@ def create_app() -> FastAPI:
     @app.on_event("shutdown")
     async def _shutdown() -> None:
         app_logger.info("[App] 应用关闭中...")
+        if index_queue is not None:
+            index_queue.stop_worker()
         await periodic_task_service.stop()
+        await graph_rebuild_queue.shutdown()
         await job_queue.shutdown()
         tasks = []
         if zoekt is not None:

@@ -5,6 +5,8 @@
 root-seeker:
   base-url: ${ROOT_SEEKER_BASE_URL:http://localhost:8000}
   api-key: ${ROOT_SEEKER_API_KEY:}
+  # Admin 回调地址：索引/清除任务完成后 RootSeeker 会 POST 到此 URL 更新 repo_index_status。优先从 sys_config（root.seeker.adminCallbackUrl）读取
+  admin-callback-url: ${ROOT_SEEKER_ADMIN_CALLBACK_URL:http://localhost:8080/gitsource/index/callback}
 
 # 项目相关配置
 ruoyi:
@@ -72,7 +74,7 @@ spring:
     time-zone: GMT+8
     date-format: yyyy-MM-dd HH:mm:ss
   profiles:
-    active: druid
+    active: druid,local
   # 文件上传
   servlet:
     multipart:

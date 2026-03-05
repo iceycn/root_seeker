@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh" xmlns:th="http://www.thymeleaf.org">
+<head>
+	<th:block th:include="include :: header('异常测试')" />
+</head>
+<body class="white-bg">
+    <div class="wrapper wrapper-content animated fadeInRight ibox-content">
+        <form class="form-horizontal m" id="form-ingest">
+            <div class="form-group">
+                <label class="col-sm-3 control-label">数据来源：</label>
+                <div class="col-sm-8">
+                    <select id="dataMode" name="dataMode" class="form-control" onchange="loadRepos()">
+                        <option value="config">配置模式（RootSeeker config + git_source）</option>
+                        <option value="mysql">MySQL 模式（git_source_repos 已启用）</option>
+                    </select>
+                    <span class="help-block">配置模式从 RootSeeker 获取仓库列表；MySQL 模式从本地 git_source_repos 表获取已启用的仓库</span>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-sm-3 control-label is-required">项目/服务：</label>
+                <div class="col-sm-8">
+                    <select id="serviceName" name="serviceName" class="form-control" required>
+                        <option value="">请先选择数据来源并加载</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-sm-3 control-label is-required">错误日志：</label>
+                <div class="col-sm-8">
+                    <textarea id="errorLog" name="errorLog" class="form-control" rows="10" required 
+                        placeholder="粘贴错误堆栈或日志内容，将提交到 RootSeeker 进行分析"></textarea>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="col-sm-3 control-label">查询模板：</label>
+                <div class="col-sm-8">
+                    <input id="queryKey" name="queryKey" class="form-control" type="text" 
+                        value="default_error_context" placeholder="默认 default_error_context"/>
+                    <span class="help-block">对应 config.yaml 中 sql_templates 的 query_key</span>
+                </div>
+            </div>
+            <div class="form-group">
+                <div class="col-sm-offset-3 col-sm-8">
+                    <button type="button" class="btn btn-primary" onclick="loadRepos()">
+                        <i class="fa fa-refresh"></i> 刷新仓库列表
+                    </button>
+                    <button type="button" class="btn btn-success" onclick="submitIngest()">
+                        <i class="fa fa-send"></i> 提交分析
+                    </button>
+                </div>
+            </div>
+        </form>
+
+        <hr/>
+        <h5><i class="fa fa-search"></i> 错误结果查询</h5>
+        <form class="form-horizontal m" id="form-query">
+            <div class="form-group">
+                <label class="col-sm-3 control-label">任务ID (analysis_id)：</label>
+                <div class="col-sm-6">
+                    <input id="analysisId" name="analysisId" class="form-control" type="text" 
+                        placeholder="提交分析后自动填充，或手动输入"/>
+                </div>
+                <div class="col-sm-2">
+                    <button type="button" class="btn btn-info" onclick="queryResult()">
+                        <i class="fa fa-search"></i> 查询结果
+                    </button>
+                </div>
+            </div>
+        </form>
+        <div id="resultArea" class="col-sm-12" style="display:none; margin-top:15px;">
+            <div class="panel panel-default">
+                <div class="panel-heading"><strong>查询结果</strong></div>
+                <div id="resultContent" class="panel-body" style="max-height:600px; overflow-y:auto;"></div>
+            </div>
+        </div>
+    </div>
+    <th:block th:include="include :: footer" />
+    <script type="text/javascript">
+        var prefix = ctx + "gitsource";
+
+        function loadRepos() {
+            var mode = $("#dataMode").val() || "config";
+            $.ajax({
+                url: prefix + "/ingestTest/repos",
+                type: "get",
+                data: { mode: mode },
+                dataType: "json",
+                success: function(result) {
+                    var repos = (result.data && result.data.repos) || result.repos || [];
+                    if (result.code == web_status.SUCCESS && repos.length >= 0) {
+                        var $sel = $("#serviceName");
+                        $sel.empty();
+                        $sel.append('<option value="">请选择项目</option>');
+                        for (var i = 0; i < repos.length; i++) {
+                            var r = repos[i];
+                            var sn = r.service_name || r.fullName || "";
+                            if (sn) {
+                                var opt = $('<option></option>').val(sn).text(r.fullName || sn);
+                                if (r.repo_id) opt.attr('data-repo-id', r.repo_id);
+                                $sel.append(opt);
+                            }
+                        }
+                        $.modal.msgSuccess("已加载 " + repos.length + " 个仓库");
+                    } else {
+                        $("#serviceName").empty().append('<option value="">加载失败</option>');
+                        $.modal.alertError(result.msg || "加载失败");
+                    }
+                },
+                error: function(xhr) {
+                    $("#serviceName").empty().append('<option value="">加载失败</option>');
+                    $.modal.alertError("加载失败，请确保 RootSeeker 服务已启动（配置模式）");
+                }
+            });
+        }
+
+        function submitIngest() {
+            var $sel = $("#serviceName");
+            var serviceName = $sel.val();
+            var repoId = $sel.find("option:selected").data("repo-id") || "";
+            var errorLog = $("#errorLog").val();
+            var queryKey = $("#queryKey").val() || "default_error_context";
+            if (!serviceName) {
+                $.modal.alertError("请选择项目/服务");
+                return;
+            }
+            if (!errorLog || !errorLog.trim()) {
+                $.modal.alertError("请填写错误日志");
+                return;
+            }
+            $.modal.loading("正在提交...");
+            var postData = { serviceName: serviceName, errorLog: errorLog.trim(), queryKey: queryKey };
+            if (repoId) postData.repoId = repoId;
+            $.ajax({
+                url: prefix + "/ingestTest/submit",
+                type: "post",
+                data: postData,
+                dataType: "json",
+                success: function(result) {
+                    $.modal.closeLoading();
+                    if (result.code == web_status.SUCCESS) {
+                        var aid = (result.data && result.data.analysis_id) || (result.analysis_id) || "";
+                        $("#analysisId").val(aid);
+                        $.modal.msgSuccess("已提交，任务ID已自动填入，可点击「查询结果」查看分析进度");
+                    } else {
+                        $.modal.alertError(result.msg);
+                    }
+                },
+                error: function(xhr) {
+                    $.modal.closeLoading();
+                    $.modal.alertError("提交失败：" + (xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : "请检查 RootSeeker 服务"));
+                }
+            });
+        }
+
+        function queryResult() {
+            var aid = $("#analysisId").val();
+            if (!aid || !aid.trim()) {
+                $.modal.alertError("请填写任务ID");
+                return;
+            }
+            $.modal.loading("查询中...");
+            $.ajax({
+                url: prefix + "/ingestTest/result",
+                type: "get",
+                data: { analysisId: aid.trim() },
+                dataType: "json",
+                success: function(result) {
+                    $.modal.closeLoading();
+                    if (result.code == web_status.SUCCESS) {
+                        var data = result.data || result;
+                        var html = formatAnalysisResult(data);
+                        $("#resultContent").html(html);
+                        $("#resultArea").show();
+                    } else {
+                        $("#resultArea").hide();
+                        $.modal.alertError(result.msg);
+                    }
+                },
+                error: function(xhr) {
+                    $.modal.closeLoading();
+                    $("#resultArea").hide();
+                    $.modal.alertError("查询失败：" + (xhr.responseJSON && xhr.responseJSON.msg ? xhr.responseJSON.msg : "请检查 RootSeeker 服务"));
+                }
+            });
+        }
+
+        function formatAnalysisResult(data) {
+            var status = data.status;
+            var statusDisplay = data.status_display || status || "";
+            if (status && ["pending", "running", "failed"].indexOf(status) >= 0) {
+                var html = '<div class="alert alert-' + (status === "failed" ? "danger" : "info") + '">';
+                html += '<strong>状态：</strong>' + (statusDisplay || status) + '<br/>';
+                html += '<strong>任务ID：</strong>' + (data.analysis_id || "-") + '<br/>';
+                if (data.created_at) html += '<strong>创建时间：</strong>' + data.created_at + '<br/>';
+                if (data.updated_at) html += '<strong>更新时间：</strong>' + data.updated_at + '<br/>';
+                if (data.error) html += '<strong>错误信息：</strong><pre style="margin-top:8px; white-space:pre-wrap;">' + escapeHtml(data.error) + '</pre>';
+                html += '</div>';
+                return html;
+            }
+            var html = '<div class="analysis-result">';
+            html += '<div class="row"><div class="col-sm-12">';
+            html += '<p><strong>服务：</strong>' + escapeHtml(data.service_name || "-") + ' &nbsp; <strong>任务ID：</strong><code>' + escapeHtml(data.analysis_id || "-") + '</code></p>';
+            if (data.created_at) html += '<p><strong>分析时间：</strong>' + data.created_at + '</p>';
+            if (data.business_impact) html += '<p><strong>业务影响：</strong><span class="label label-warning">' + escapeHtml(data.business_impact) + '</span></p>';
+            html += '</div></div>';
+            if (data.summary) {
+                html += '<div class="panel panel-default" style="margin-top:12px;"><div class="panel-heading"><strong>分析摘要</strong></div><div class="panel-body"><p>' + escapeHtml(data.summary).replace(/\n/g, '<br/>') + '</p></div></div>';
+            }
+            if (data.hypotheses && data.hypotheses.length > 0) {
+                html += '<div class="panel panel-default" style="margin-top:12px;"><div class="panel-heading"><strong>根因假设</strong></div><div class="panel-body"><ul>';
+                for (var i = 0; i < data.hypotheses.length; i++) {
+                    html += '<li>' + escapeHtml(data.hypotheses[i]).replace(/\n/g, '<br/>') + '</li>';
+                }
+                html += '</ul></div></div>';
+            }
+            if (data.suggestions && data.suggestions.length > 0) {
+                html += '<div class="panel panel-default" style="margin-top:12px;"><div class="panel-heading"><strong>修复建议</strong></div><div class="panel-body"><ul>';
+                for (var i = 0; i < data.suggestions.length; i++) {
+                    html += '<li>' + escapeHtml(data.suggestions[i]).replace(/\n/g, '<br/>') + '</li>';
+                }
+                html += '</ul></div></div>';
+            }
+            if (data.evidence && data.evidence.files && data.evidence.files.length > 0) {
+                html += '<div class="panel panel-default" style="margin-top:12px;"><div class="panel-heading"><strong>证据文件</strong> <span class="badge">' + data.evidence.files.length + '</span></div><div class="panel-body">';
+                for (var i = 0; i < data.evidence.files.length; i++) {
+                    var f = data.evidence.files[i];
+                    html += '<div class="well well-sm" style="margin-bottom:10px;">';
+                    html += '<strong>' + escapeHtml(f.path || "未知") + '</strong>';
+                    if (f.line_start != null || f.line_end != null) html += ' <span class="text-muted">L' + (f.line_start || "-") + (f.line_end ? "-" + f.line_end : "") + '</span>';
+                    html += '<pre style="margin-top:8px; margin-bottom:0; font-size:12px; max-height:200px; overflow:auto; background:#f8f9fa;">' + escapeHtml(f.content || "") + '</pre>';
+                    html += '</div>';
+                }
+                if (data.evidence.notes && data.evidence.notes.length > 0) {
+                    html += '<p><strong>备注：</strong>' + data.evidence.notes.map(function(n){ return escapeHtml(n); }).join('；') + '</p>';
+                }
+                html += '</div></div>';
+            }
+            if (data.related_services && data.related_services.length > 0) {
+                html += '<div class="panel panel-default" style="margin-top:12px;"><div class="panel-heading"><strong>关联服务</strong></div><div class="panel-body"><table class="table table-condensed"><thead><tr><th>服务</th><th>关系</th><th>说明</th></tr></thead><tbody>';
+                for (var i = 0; i < data.related_services.length; i++) {
+                    var rs = data.related_services[i];
+                    html += '<tr><td>' + escapeHtml(rs.service_name || "-") + '</td><td>' + escapeHtml(rs.relation || "-") + '</td><td>' + (rs.evidence && rs.evidence.length ? escapeHtml(rs.evidence.join("; ")) : "-") + '</td></tr>';
+                }
+                html += '</tbody></table></div></div>';
+            }
+            if (data.raw_model_output) {
+                html += '<div class="panel panel-default" style="margin-top:12px;"><div class="panel-heading"><strong>原始输出</strong> <a href="javascript:void(0)" onclick="$(this).parent().next().toggle()">展开/收起</a></div><div class="panel-body" style="display:none;"><pre style="white-space:pre-wrap; font-size:12px;">' + escapeHtml(data.raw_model_output) + '</pre></div></div>';
+            }
+            html += '</div>';
+            return html;
+        }
+
+        function escapeHtml(s) {
+            if (s == null || s === undefined) return "";
+            var t = String(s);
+            return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        $(function() {
+            loadRepos();
+        });
+    </script>
+</body>
+</html>

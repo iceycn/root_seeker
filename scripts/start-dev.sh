@@ -11,4 +11,5 @@ bash scripts/stop-server.sh "$PORT" 2>/dev/null || true
 
 echo ""
 echo "启动 RootSeeker（--reload 监听代码变更自动重启）..."
+export TOKENIZERS_PARALLELISM=false
 python3 -m uvicorn main:app --host 0.0.0.0 --port "$PORT" --reload

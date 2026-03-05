@@ -1,0 +1,78 @@
+# 项目代码审查清单
+
+> 审查时间：2025-02
+> 基于 ai-log-helper 全量代码审查
+
+---
+
+## 一、高优先级（建议优先修复）
+
+| # | 问题 | 位置 | 建议 |
+|---|------|------|------|
+| 1 | **裸 `except:` 捕获所有异常** | `root_seeker/services/analyzer.py:1234` | 改为 `except Exception:` 并记录日志，避免吞掉 `KeyboardInterrupt`、`SystemExit` |
+| 2 | **SLS 查询模板注入风险** | `root_seeker/sql_templates.py:12`、`enricher.py` | `query.format(**params)` 中 `service_name`、`error_log` 来自用户输入，含 `{`、`}` 会触发 `KeyError`。应对参数做转义或白名单校验 |
+| 3 | **trace_id/request_id 直接拼入 SLS 查询** | `root_seeker/providers/trace_chain.py:147-166` | 来自 tags 或 LLM 的值直接拼入查询，可能注入 SLS 语法。应对其做转义或严格校验 |
+| 4 | **Git 凭证明文存储** | `root_seeker/git_source/storage/file_storage.py` | 密码以明文写入 JSON。建议加密或使用密钥管理服务 |
+| 5 | **api_keys 为空时无鉴权** | `root_seeker/security.py:12-13` | 所有接口免鉴权。建议启动时打 warning，文档强调生产必须配置 |
+| 6 | **IngestEvent 无长度限制** | `root_seeker/domain.py:9-14` | `service_name`、`error_log` 无 max_length，易导致 DoS。建议增加 `Field(max_length=...)` |
+| 7 | **测试覆盖不足** | `tests/` | 缺少 ingest、enricher、analyzer、security、config_reader 等核心模块测试 |
+
+---
+
+## 二、中优先级（近期安排）
+
+| # | 问题 | 位置 | 建议 |
+|---|------|------|------|
+| 8 | **数据库不可用时静默回退** | `root_seeker/config_reader.py:97-98` | `except Exception: pass` 隐藏连接失败。建议记录 warning 并说明回退到 file 模式 |
+| 9 | **多处裸 `except Exception: pass`** | `call_graph_expander.py`、`mysql_storage.py`、`enricher.py` | 至少记录 debug/warning 日志，便于排查 |
+| 10 | **config_db.password 默认空** | `root_seeker/config_reader.py:34` | database 模式下空密码可能误用。建议强制校验或明确错误提示 |
+| 11 | **Docker 配置含硬编码密码** | `root_seeker_docker/config.docker.yaml` | 生产应通过环境变量或 secrets 注入 |
+| 12 | **create_app 过长** | `root_seeker/app.py` | 约 800+ 行，建议拆分为路由模块、依赖注入 |
+| 13 | **依赖版本未固定** | `pyproject.toml` | 使用 `>=` 可能导致环境不一致。建议 `poetry lock` 或 `pip freeze` |
+| 14 | **无集成测试** | `tests/` | 建议增加 API 端到端测试（如 `/ingest`、`/analysis/{id}`） |
+| 15 | **无安全相关测试** | `tests/` | 建议增加 SQL 模板注入、路径遍历、API Key 校验测试 |
+
+---
+
+## 三、低优先级（逐步优化）
+
+| # | 问题 | 位置 | 建议 |
+|---|------|------|------|
+| 16 | **`Optional` 已弃用** | `root_seeker/runtime/job_queue.py` | 将 `Optional[X]` 改为 `X \| None` |
+| 17 | **full_reload service_name 校验不完整** | `root_seeker/app.py` | 与其他接口统一校验 `len`、空串 |
+| 18 | **_try_parse_json 异常被吞掉** | `root_seeker/services/enricher.py:312-320` | 记录解析失败原因，便于调试 |
+| 19 | **CONFIG_CHECKLIST 与实现不一致** | `docs/CONFIG_CHECKLIST.md` | 更新与 config.py 的对应说明 |
+| 20 | **API 文档缺少请求/响应示例** | `README.md` | 为关键接口补充示例 |
+| 21 | **环境变量文档不完整** | `README.md`、`docs/` | 列出所有支持的环境变量及用途 |
+| 22 | **配置在多处重复传递** | `root_seeker/app.py` | config_db 多次传递，可封装为依赖 |
+| 23 | **Git 平台检测逻辑重复** | `root_seeker/git_source/service.py` | `platform == "generic"` 时合并逻辑 |
+
+---
+
+## 四、已确认无问题
+
+| 项目 | 说明 |
+|------|------|
+| SQL 注入 | MySQL 已使用 `%s` 参数化查询 |
+| delete_collection 调用 | `asyncio.to_thread(qstore.delete_collection)` 正确 |
+| trace_chain accessKey | SDK 参数 `accessKey=cfg.access_key_secret` 正确 |
+
+---
+
+## 五、严重程度汇总
+
+| 严重程度 | 数量 |
+|----------|------|
+| 高 | 7 |
+| 中 | 8 |
+| 低 | 8 |
+
+---
+
+## 六、优先修复 Top 5
+
+1. **裸 `except:`** → `except Exception:` 并记录日志
+2. **SLS 查询注入** → 对 `service_name`、`error_log`、`trace_id`、`request_id` 做转义或白名单
+3. **Git 凭证明文** → 加密或密钥管理
+4. **api_keys 为空** → 启动 warning + 文档强调
+5. **IngestEvent 长度限制** → 增加 `max_length` 防 DoS

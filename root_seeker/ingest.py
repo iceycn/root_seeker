@@ -44,12 +44,14 @@ def parse_single_log(raw: dict[str, Any]) -> IngestEvent | None:
         return None
     if "service_name" in raw and "error_log" in raw:
         try:
+            repo_id = raw.get("repo_id")
             return IngestEvent(
                 service_name=str(raw["service_name"]),
                 error_log=str(raw["error_log"]),
                 query_key=str(raw.get("query_key", "default_error_context")),
                 timestamp=_parse_timestamp(raw.get("timestamp")),
                 tags=dict(raw.get("tags", {})) if isinstance(raw.get("tags"), dict) else {},
+                repo_id=str(repo_id) if repo_id else None,
             )
         except Exception:
             return None
@@ -112,4 +114,5 @@ def to_normalized_event(event: IngestEvent) -> NormalizedErrorEvent:
         query_key=event.query_key,
         timestamp=event.timestamp or datetime.now(tz=timezone.utc),
         tags=event.tags,
+        repo_id=event.repo_id,
     )
