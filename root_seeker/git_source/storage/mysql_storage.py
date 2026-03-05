@@ -5,6 +5,7 @@ import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 from root_seeker.git_source.models import (
     GitSourceCredential,
@@ -42,6 +43,26 @@ def _connect(host: str, port: int, user: str, password: str, database: str):
         conn.close()
 
 
+def _normalize_git_url_for_storage(url: str) -> str:
+    s = (url or "").strip()
+    if not s:
+        return s
+    if s.startswith("http://") or s.startswith("https://"):
+        return s
+    if s.startswith("ssh://"):
+        parsed = urlparse(s)
+        if parsed.hostname and parsed.path:
+            path = parsed.path.lstrip("/")
+            return f"https://{parsed.hostname}/{path}"
+        return s
+    if "@" in s and ":" in s and "://" not in s:
+        host = s.split("@", 1)[1].split(":", 1)[0]
+        path = s.split(":", 1)[1].lstrip("/")
+        if host and path:
+            return f"https://{host}/{path}"
+    return s
+
+
 class MySQLStorageBackend:
     """MySQL 存储。"""
 
@@ -69,10 +90,15 @@ class MySQLStorageBackend:
                     username VARCHAR(255) NOT NULL,
                     password VARCHAR(512) NOT NULL,
                     platform VARCHAR(64) NOT NULL,
+                    clone_protocol VARCHAR(16) NOT NULL DEFAULT 'https',
                     created_at DATETIME,
                     updated_at DATETIME
                 )
             """)
+            try:
+                cur.execute("ALTER TABLE git_source_credential ADD COLUMN clone_protocol VARCHAR(16) NOT NULL DEFAULT 'https'")
+            except Exception:
+                pass
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS git_source_repos (
                     id VARCHAR(128) PRIMARY KEY,
@@ -116,6 +142,7 @@ class MySQLStorageBackend:
                         username=row["username"],
                         password=row["password"],
                         platform=row["platform"],
+                        clone_protocol=row.get("clone_protocol") or "https",
                         created_at=row["created_at"],
                     )
                 cur.execute("SELECT * FROM git_source_repos")
@@ -158,15 +185,15 @@ class MySQLStorageBackend:
                 if data.credential:
                     cur.execute("""
                         INSERT INTO git_source_credential
-                        (id, domain, username, password, platform, created_at, updated_at)
-                        VALUES (1, %s, %s, %s, %s, %s, %s)
+                        (id, domain, username, password, platform, clone_protocol, created_at, updated_at)
+                        VALUES (1, %s, %s, %s, %s, %s, %s, %s)
                         ON DUPLICATE KEY UPDATE
-                        domain=%s, username=%s, password=%s, platform=%s, updated_at=%s
+                        domain=%s, username=%s, password=%s, platform=%s, clone_protocol=%s, updated_at=%s
                     """, (
                         data.credential.domain, data.credential.username, data.credential.password,
-                        data.credential.platform, data.credential.created_at or now, now,
+                        data.credential.platform, getattr(data.credential, "clone_protocol", "https") or "https", data.credential.created_at or now, now,
                         data.credential.domain, data.credential.username, data.credential.password,
-                        data.credential.platform, now,
+                        data.credential.platform, getattr(data.credential, "clone_protocol", "https") or "https", now,
                     ))
                 cur.execute("DELETE FROM git_source_repos")
                 for r in data.repos:
@@ -176,7 +203,7 @@ class MySQLStorageBackend:
                          enabled, local_dir, last_sync_at, created_at, extra)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """, (
-                        r.id, r.full_name, r.full_path, r.platform_id, r.git_url, r.default_branch, r.description,
+                        r.id, r.full_name, r.full_path, r.platform_id, _normalize_git_url_for_storage(r.git_url), r.default_branch, r.description,
                         json.dumps(r.selected_branches), 1 if r.enabled else 0,
                         r.local_dir, r.last_sync_at, r.created_at or now,
                         json.dumps(r.extra),

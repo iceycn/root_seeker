@@ -34,12 +34,12 @@ ON DUPLICATE KEY UPDATE config_value=VALUES(config_value), updated_at=sysdate();
 
 -- 7. 企微（Demo 占位）
 INSERT INTO app_config (config_category, config_key, config_value, description, sort_order, created_at, updated_at)
-VALUES ('wecom', 'default', '{"webhook_url":"","secret":"","security_mode":"ip"}', '企微机器人，可选', 60, sysdate(), sysdate())
+VALUES ('wecom', 'default', '{"webhook_url":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=","secret":"","security_mode":"ip"}', '企微机器人，可选', 60, sysdate(), sysdate())
 ON DUPLICATE KEY UPDATE config_value=VALUES(config_value), updated_at=sysdate();
 
 -- 8. 钉钉（Demo 占位）
 INSERT INTO app_config (config_category, config_key, config_value, description, sort_order, created_at, updated_at)
-VALUES ('dingtalk', 'default', '{"webhook_url":"","secret":"","security_mode":"sign"}', '钉钉机器人，可选', 70, sysdate(), sysdate())
+VALUES ('dingtalk', 'default', '{"webhook_url":"https://oapi.dingtalk.com/robot/send?access_token=","secret":"","security_mode":"sign"}', '钉钉机器人，可选', 70, sysdate(), sysdate())
 ON DUPLICATE KEY UPDATE config_value=VALUES(config_value), updated_at=sysdate();
 
 -- 9. Git 仓库发现（MySQL 存储，与 Admin 共用）

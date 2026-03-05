@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS git_source_credential (
     username VARCHAR(255) NOT NULL COMMENT '账号',
     password VARCHAR(512) NOT NULL COMMENT '密码/Token',
     platform VARCHAR(64) NOT NULL COMMENT 'gitee/github/gitlab/codeup',
+    clone_protocol VARCHAR(16) NOT NULL DEFAULT 'https' COMMENT 'clone 协议：https/ssh',
     created_at DATETIME COMMENT '创建时间',
     updated_at DATETIME COMMENT '更新时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Git 平台凭证';
@@ -37,5 +38,9 @@ CREATE TABLE IF NOT EXISTS git_source_repos (
 -- RootSeeker 配置项（sys_config 表，需先导入 ry_20250416.sql）
 -- 若已存在则跳过
 INSERT INTO sys_config (config_name, config_key, config_value, config_type, create_by, create_time, remark)
-SELECT 'RootSeeker 分析服务地址', 'root.seeker.baseUrl', 'http://localhost:8000', 'Y', 'admin', sysdate(), 'RootSeeker 服务 base URL，用于拉取仓库、同步等。默认 http://localhost:8000'
+SELECT 'RootSeeker 分析服务地址', 'root.seeker.baseUrl', 'http://root-seeker:8000', 'Y', 'admin', sysdate(), 'RootSeeker 服务 base URL，用于拉取仓库、同步等。Docker 内网默认 http://root-seeker:8000'
 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_config WHERE config_key = 'root.seeker.baseUrl');
+
+INSERT INTO sys_config (config_name, config_key, config_value, config_type, create_by, create_time, remark)
+SELECT 'RootSeeker Admin 回调地址', 'root.seeker.adminCallbackUrl', 'http://root-seeker-admin:8080/gitsource/index/callback', 'Y', 'admin', sysdate(), 'RootSeeker 索引任务回调地址。Docker 内网默认 http://root-seeker-admin:8080/gitsource/index/callback'
+FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_config WHERE config_key = 'root.seeker.adminCallbackUrl');

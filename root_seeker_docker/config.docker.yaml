@@ -1,5 +1,5 @@
 # Docker 环境下的 config 覆盖片段
-# 用法：合并到主 config.yaml，start.sh/start.ps1 会自动合并
+# 用法：docker-compose 挂载到容器内 /app/config.yaml
 # 容器内使用服务名：qdrant、zoekt、mysql
 # 默认使用 MySQL 模式，配置可在 Admin「AI应用配置」中管理
 
@@ -33,3 +33,10 @@ git_source:
     password: root
     database: root_seeker
 
+aliyun_sls:
+  endpoint: ""
+  access_key_id: ""
+  access_key_secret: ""
+  project: ""
+  logstore: ""
+  topic: null

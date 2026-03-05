@@ -22,6 +22,7 @@ dependencies = [
 [project.optional-dependencies]
 mysql = [
   "PyMySQL>=1.1",
+  "cryptography>=42",
 ]
 dev = [
   "pytest>=8.0",

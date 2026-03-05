@@ -24,6 +24,9 @@ public class GitSourceCredentialServiceImpl implements IGitSourceCredentialServi
     @Override
     public int saveCredential(GitSourceCredential credential) {
         credential.setId(1);
+        if (credential.getCloneProtocol() == null || credential.getCloneProtocol().trim().isEmpty()) {
+            credential.setCloneProtocol("https");
+        }
         GitSourceCredential existing = credentialMapper.selectById(1);
         if (existing == null) {
             return credentialMapper.insert(credential);

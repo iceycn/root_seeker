@@ -6,34 +6,16 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
 Set-Location $ProjectRoot
 
-$Config = Join-Path $ProjectRoot "config.yaml"
-$ConfigExample = Join-Path $ProjectRoot "config.example.yaml"
-$ConfigDocker = Join-Path $ScriptDir "config.docker.yaml"
-
-# 1. 若 config.yaml 不存在，从 config.example.yaml 复制
-if (-not (Test-Path $Config)) {
-    Write-Host "config.yaml 不存在，从 config.example.yaml 复制..."
-    Copy-Item $ConfigExample $Config
-    Write-Host "  已创建默认配置，服务可启动。完整功能需编辑 config.yaml 填写 aliyun_sls、llm 等"
-}
-
-# 2. 合并 Docker 专用配置（qdrant、zoekt、config_db、repos 路径）
-$MergeScript = Join-Path $ScriptDir "merge_config.py"
-try {
-    python $MergeScript $Config $ConfigDocker 2>$null
-    if ($LASTEXITCODE -eq 0) { Write-Host "已合并 config.docker.yaml（容器内服务地址）" }
-} catch { }
-
-# 3. 确保 data 目录存在（repos、repos_from_git、audit）
+# 1. 确保 data 目录存在（repos、repos_from_git、audit）
 New-Item -ItemType Directory -Force -Path (Join-Path $ProjectRoot "data\repos") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $ProjectRoot "data\repos_from_git") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $ProjectRoot "data\audit") | Out-Null
 
-# 4. 启动
+# 2. 启动
 Write-Host ""
 Write-Host "=== 启动 Docker 服务（MySQL 首次启动将自动初始化表）==="
 Set-Location $ScriptDir
-docker compose up -d
+docker compose up -d --build
 
 Write-Host ""
 Write-Host "=== 服务已启动 ==="

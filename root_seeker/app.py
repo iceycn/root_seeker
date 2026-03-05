@@ -427,7 +427,34 @@ def create_app() -> FastAPI:
         timeout_seconds=cfg.analysis_timeout_seconds,
         db_status_sync=_db_status_sync if config_db else None,
     )
-    repo_mirror = RepoMirror(git_timeout_seconds=cfg.git_timeout_seconds)
+    ssh_known_hosts_file = str((data_dir / "ssh" / "known_hosts").resolve())
+    def _credential_provider(git_url: str):
+        if not git_source_service:
+            return None
+        cred = git_source_service.get_credential()
+        if not cred:
+            return None
+        from urllib.parse import urlparse
+        parsed = urlparse(git_url)
+        host = parsed.hostname or ""
+        domain = cred.domain.strip().lower().replace("https://", "").replace("http://", "")
+        domain = domain.split("/", 1)[0]
+        if not host or not domain:
+            return None
+        allow_hosts = {domain}
+        if getattr(cred, "platform", "") == "codeup":
+            allow_hosts.add("codeup.aliyun.com")
+            if "openapi-rdc.aliyuncs.com" in domain:
+                allow_hosts.add("codeup.aliyun.com")
+        if host.lower() in allow_hosts:
+            return (cred.username, cred.password)
+        return None
+    repo_mirror = RepoMirror(
+        git_timeout_seconds=cfg.git_timeout_seconds,
+        ssh_known_hosts_file=ssh_known_hosts_file,
+        ssh_keyscan_hosts=[],
+        credential_provider=_credential_provider,
+    )
     
     # 创建定时任务服务
     log_clusterer = LogClusterer(
@@ -1175,6 +1202,7 @@ def create_app() -> FastAPI:
                 username=str(username),
                 password=str(password),
                 platform=body.get("platform"),
+                clone_protocol="https",
             )
             return {"status": "ok" if ok else "error", "message": msg}
 
@@ -1198,6 +1226,7 @@ def create_app() -> FastAPI:
                     username=str(username),
                     password=str(password),
                     platform=body.get("platform"),
+                    clone_protocol="https",
                 )
             except Exception as e:
                 app_logger.warning(f"[GitSource] 配置保存失败: {e}")

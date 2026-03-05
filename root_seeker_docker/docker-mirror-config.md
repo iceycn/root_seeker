@@ -6,6 +6,8 @@
 
 ## 配置前备份（推荐）
 
+> macOS / Linux 用户建议优先使用「方法一」图形界面配置；直接编辑配置文件的路径/生效方式在不同 Docker 版本之间差异较大。
+
 ```powershell
 # 备份 daemon.json（若存在）
 Copy-Item "$env:ProgramData\Docker\config\daemon.json" "$env:ProgramData\Docker\config\daemon.json.bak" -ErrorAction SilentlyContinue
@@ -19,7 +21,7 @@ Copy-Item "$env:ProgramData\Docker\config\daemon.json" "$env:ProgramData\Docker\
 
 ## 方法一：Docker Desktop 图形界面（推荐，风险最低）
 
-1. 右键点击任务栏右下角 **Docker 图标**
+1. 打开 **Docker Desktop**
 2. 选择 **Settings（设置）**
 3. 左侧选择 **Docker Engine**
 4. 在右侧 JSON 配置中，找到或添加 `registry-mirrors` 字段：
@@ -50,6 +52,11 @@ Copy-Item "$env:ProgramData\Docker\config\daemon.json" "$env:ProgramData\Docker\
 
 - Docker Desktop：`C:\ProgramData\Docker\config\daemon.json`
 - 若不存在，可创建 `%UserProfile%\.docker\daemon.json`
+
+### macOS 路径（不推荐，优先用方法一）
+
+- 通常可尝试：`~/.docker/daemon.json`
+- 修改后需要重启 Docker Desktop 才会生效（可用 `docker desktop restart` 或在 UI 里重启）
 
 ### 配置内容
 

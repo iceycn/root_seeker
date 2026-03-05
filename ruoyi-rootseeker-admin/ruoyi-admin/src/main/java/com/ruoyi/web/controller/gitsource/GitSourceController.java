@@ -328,6 +328,7 @@ public class GitSourceController extends BaseController {
             cred.setUsername(username);
             cred.setPassword(password);
             cred.setPlatform(platform != null && !platform.isEmpty() ? platform : "generic");
+            cred.setCloneProtocol("https");
             credentialService.saveCredential(cred);
             Map<String, Object> result = rootSeekerClient.connectAndFetchRepos(domain, username, password, platform);
             // 将 RootSeeker 返回的仓库同步到管理端 git_source_repos 表，供仓库管理页面展示
@@ -348,6 +349,15 @@ public class GitSourceController extends BaseController {
                         String platformId = pidObj != null ? pidObj.toString() : null;
                         Object urlObj = r.get("git_url");
                         String gitUrl = urlObj != null ? urlObj.toString() : null;
+                        if (gitUrl != null && gitUrl.startsWith("git@") && gitUrl.contains(":")) {
+                            try {
+                                String host = gitUrl.substring(gitUrl.indexOf("@") + 1, gitUrl.indexOf(":"));
+                                String path = gitUrl.substring(gitUrl.indexOf(":") + 1);
+                                if (!host.isEmpty() && !path.isEmpty()) {
+                                    gitUrl = "https://" + host + "/" + path;
+                                }
+                            } catch (Exception ignored) { }
+                        }
                         Object dbObj = r.get("default_branch");
                         String defaultBranch = dbObj != null ? dbObj.toString() : "master";
                         if (id == null || id.isEmpty() || fullName == null || fullName.isEmpty() || gitUrl == null || gitUrl.isEmpty())

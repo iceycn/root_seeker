@@ -226,7 +226,7 @@ public class RootSeekerClient {
 ## 七、项目结构（已实现）
 
 ```
-ai-log-helper/
+root_seek/
 ├── root_seeker/                  # Python RootSeeker 核心
 ├── config.yaml
 ├── docs/

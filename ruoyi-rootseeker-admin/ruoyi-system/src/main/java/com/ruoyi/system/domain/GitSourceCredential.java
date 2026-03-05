@@ -17,6 +17,8 @@ public class GitSourceCredential {
     private String password;
     @Excel(name = "平台")
     private String platform;
+    @Excel(name = "拉取方式")
+    private String cloneProtocol;
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
     private Date createdAt;
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
@@ -32,6 +34,8 @@ public class GitSourceCredential {
     public void setPassword(String password) { this.password = password; }
     public String getPlatform() { return platform; }
     public void setPlatform(String platform) { this.platform = platform; }
+    public String getCloneProtocol() { return cloneProtocol; }
+    public void setCloneProtocol(String cloneProtocol) { this.cloneProtocol = cloneProtocol; }
     public Date getCreatedAt() { return createdAt; }
     public void setCreatedAt(Date createdAt) { this.createdAt = createdAt; }
     public Date getUpdatedAt() { return updatedAt; }

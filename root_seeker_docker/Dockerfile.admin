@@ -1,7 +1,7 @@
 # RootSeeker Admin（若依 Java 管理端）
 # 构建 context 为 ruoyi-rootseeker-admin 目录，避免 .dockerignore 排除
 
-FROM maven:3.9-eclipse-temurin-8 AS builder
+FROM hub.rat.dev/library/maven:3.9-eclipse-temurin-8 AS builder
 WORKDIR /build
 
 # 复制 ruoyi 项目（context 为 ruoyi-rootseeker-admin）
@@ -11,7 +11,7 @@ COPY . /build
 RUN mvn clean package -DskipTests -q
 
 # 运行阶段
-FROM eclipse-temurin:8-jre
+FROM hub.rat.dev/library/eclipse-temurin:8-jre
 WORKDIR /app
 
 # 复制 jar（ruoyi-admin 为可执行 jar）

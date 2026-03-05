@@ -5,6 +5,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from root_seeker.git_source.models import (
     GitSourceCredential,
@@ -27,12 +28,30 @@ def _deserialize_dt(s: str | None) -> datetime | None:
 
 
 def _repo_to_dict(r: GitSourceRepo) -> dict:
+    def _normalize_git_url_for_storage(url: str) -> str:
+        s = (url or "").strip()
+        if not s:
+            return s
+        if s.startswith("http://") or s.startswith("https://"):
+            return s
+        if s.startswith("ssh://"):
+            parsed = urlparse(s)
+            if parsed.hostname and parsed.path:
+                path = parsed.path.lstrip("/")
+                return f"https://{parsed.hostname}/{path}"
+            return s
+        if "@" in s and ":" in s and "://" not in s:
+            host = s.split("@", 1)[1].split(":", 1)[0]
+            path = s.split(":", 1)[1].lstrip("/")
+            if host and path:
+                return f"https://{host}/{path}"
+        return s
     return {
         "id": r.id,
         "full_name": r.full_name,
         "full_path": r.full_path,
         "platform_id": r.platform_id,
-        "git_url": r.git_url,
+        "git_url": _normalize_git_url_for_storage(r.git_url),
         "default_branch": r.default_branch,
         "description": r.description,
         "selected_branches": r.selected_branches,
@@ -76,6 +95,7 @@ def _credential_to_dict(c: GitSourceCredential | None) -> dict | None:
         "username": c.username,
         "password": c.password,
         "platform": c.platform,
+        "clone_protocol": getattr(c, "clone_protocol", "https"),
         "created_at": _serialize_dt(c.created_at),
     }
 
@@ -88,6 +108,7 @@ def _dict_to_credential(d: dict | None) -> GitSourceCredential | None:
         username=d.get("username", ""),
         password=d.get("password", ""),
         platform=d.get("platform", "generic"),
+        clone_protocol=d.get("clone_protocol", "https") or "https",
         created_at=_deserialize_dt(d.get("created_at")),
     )
 

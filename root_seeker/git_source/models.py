@@ -13,6 +13,7 @@ class GitSourceCredential:
     username: str
     password: str
     platform: str  # gitee | github | gitlab | codeup
+    clone_protocol: str = "https"  # https | ssh
     created_at: datetime | None = None
 
 

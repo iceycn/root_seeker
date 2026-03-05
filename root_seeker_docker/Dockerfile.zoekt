@@ -2,12 +2,12 @@
 # 提供 /api/search 接口，RootSeeker 调用
 # 索引目录挂载到 /data/index，初始为空；同步仓库后可 exec 执行 zoekt-index 建索引
 
-FROM golang:1.22-alpine AS builder
+FROM hub.rat.dev/library/golang:1.22-alpine AS builder
 # 国内网络：使用 Go 代理加速
 RUN apk add --no-cache git
 # 使用 google/zoekt（GOTOOLCHAIN=auto 可自动下载所需 Go 版本）
 RUN export GOPROXY=https://goproxy.cn,direct GOTOOLCHAIN=auto; go install github.com/sourcegraph/zoekt/cmd/zoekt-webserver@latest && go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest
-FROM alpine:3.19
+FROM hub.rat.dev/library/alpine:3.19
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /go/bin/zoekt-webserver /usr/local/bin/
 COPY --from=builder /go/bin/zoekt-index /usr/local/bin/

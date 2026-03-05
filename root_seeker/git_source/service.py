@@ -36,12 +36,13 @@ def _safe_repo_dir_name(full_path: str) -> str:
 def _normalize_gitee_repo(raw: dict[str, Any], credential: GitSourceCredential) -> GitSourceRepo:
     full_path = raw.get("full_name") or raw.get("path_with_namespace") or ""
     platform_id = str(raw["id"]) if raw.get("id") is not None else None
+    git_url = raw.get("clone_url") or raw.get("ssh_url") or f"https://gitee.com/{full_path}.git"
     return GitSourceRepo(
         id=str(raw.get("id", full_path or uuid.uuid4().hex)),
         full_name=_project_name(full_path),
         full_path=full_path,
         platform_id=platform_id,
-        git_url=raw.get("clone_url") or raw.get("ssh_url") or f"https://gitee.com/{full_path}.git",
+        git_url=git_url,
         default_branch=raw.get("default_branch") or "master",
         description=raw.get("description"),
         selected_branches=[],
@@ -56,12 +57,13 @@ def _normalize_gitee_repo(raw: dict[str, Any], credential: GitSourceCredential) 
 def _normalize_github_repo(raw: dict[str, Any], credential: GitSourceCredential) -> GitSourceRepo:
     full_path = raw.get("full_name") or ""
     platform_id = str(raw["id"]) if raw.get("id") is not None else None
+    git_url = raw.get("clone_url") or raw.get("ssh_url") or ""
     return GitSourceRepo(
         id=str(raw.get("id", full_path or uuid.uuid4().hex)),
         full_name=_project_name(full_path),
         full_path=full_path,
         platform_id=platform_id,
-        git_url=raw.get("clone_url") or raw.get("ssh_url") or "",
+        git_url=git_url,
         default_branch=raw.get("default_branch") or "main",
         description=raw.get("description"),
         selected_branches=[],
@@ -76,12 +78,13 @@ def _normalize_github_repo(raw: dict[str, Any], credential: GitSourceCredential)
 def _normalize_gitlab_repo(raw: dict[str, Any], credential: GitSourceCredential) -> GitSourceRepo:
     full_path = raw.get("path_with_namespace") or raw.get("name") or ""
     platform_id = str(raw["id"]) if raw.get("id") is not None else None
+    git_url = raw.get("http_url_to_repo") or raw.get("ssh_url_to_repo") or ""
     return GitSourceRepo(
         id=str(raw.get("id", uuid.uuid4().hex)),
         full_name=_project_name(full_path),
         full_path=full_path,
         platform_id=platform_id,
-        git_url=raw.get("http_url_to_repo") or raw.get("ssh_url_to_repo") or "",
+        git_url=git_url,
         default_branch=raw.get("default_branch") or "main",
         description=raw.get("description"),
         selected_branches=[],
@@ -146,6 +149,7 @@ class GitSourceService:
         username: str,
         password: str,
         platform: str | None = None,
+        clone_protocol: str | None = None,
     ) -> tuple[bool, str]:
         """
         验证凭证是否有效（不保存）。返回 (成功, 消息)。
@@ -160,6 +164,7 @@ class GitSourceService:
             username=username.strip(),
             password=password,
             platform=platform,
+            clone_protocol="https",
             created_at=datetime.now(timezone.utc),
         )
         try:
@@ -176,6 +181,7 @@ class GitSourceService:
         username: str,
         password: str,
         platform: str | None = None,
+        clone_protocol: str | None = None,
     ) -> list[GitSourceRepo]:
         """
         连接 Git 平台，获取仓库列表，保存凭证。
@@ -189,6 +195,7 @@ class GitSourceService:
             username=username.strip(),
             password=password,
             platform=platform,
+            clone_protocol="https",
             created_at=datetime.now(timezone.utc),
         )
         fetcher = get_fetcher(cred)
@@ -241,6 +248,10 @@ class GitSourceService:
         if enabled_only:
             repos = [r for r in repos if r.enabled]
         return repos
+
+    def get_credential(self) -> GitSourceCredential | None:
+        data = self._storage.load()
+        return data.credential
 
     def list_branches(
         self,
