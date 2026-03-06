@@ -12,7 +12,20 @@ qdrant:
 
 zoekt:
   api_base_url: "http://zoekt:6070"
-
+wecom:
+  webhook_url: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=REPLACE_ME
+  security_mode: ip
+dingtalk:
+  webhook_url: https://oapi.dingtalk.com/robot/send?access_token=REPLACE_ME
+  security_mode: sign
+llm:
+  kind: ""
+  base_url: ""
+  api_key: ""
+  model: ""
+  timeout_seconds: 90
+  temperature: 0.7
+  max_tokens: 2000
 # 数据库模式时连接 MySQL 容器（config_source=database 时生效）
 config_db:
   host: "mysql"

@@ -16,7 +16,7 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
       - ./mysql-init/initdb:/docker-entrypoint-initdb.d
-      - ./mysql-init/sql:/docker-entrypoint-initdb.d/src:ro
+      - ./mysql-init/sql:/docker-entrypoint-initdb.d/sql:ro
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
