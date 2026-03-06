@@ -18,14 +18,7 @@ wecom:
 dingtalk:
   webhook_url: https://oapi.dingtalk.com/robot/send?access_token=REPLACE_ME
   security_mode: sign
-llm:
-  kind: ""
-  base_url: ""
-  api_key: ""
-  model: ""
-  timeout_seconds: 90
-  temperature: 0.7
-  max_tokens: 2000
+# llm/embedding 等由 app_config 表提供，config_source=database 时从数据库读取
 # 数据库模式时连接 MySQL 容器（config_source=database 时生效）
 config_db:
   host: "mysql"
