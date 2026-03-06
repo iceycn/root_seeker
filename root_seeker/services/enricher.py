@@ -11,6 +11,8 @@ from root_seeker.providers.llm import LLMProvider
 from root_seeker.providers.sls import CloudLogProvider
 from root_seeker.providers.trace_chain import TraceChainProvider
 from root_seeker.sql_templates import SqlTemplateRegistry
+from root_seeker import prompts
+from root_seeker.utils import parse_json_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -181,25 +183,8 @@ class LogEnricher:
         log_preview = error_log[:3000]
         logger.debug(f"[LogEnricher] 准备使用 LLM 提取 trace_id，日志预览长度={len(log_preview)}")
 
-        system = (
-            "你是一个日志分析专家。你的任务是从错误日志中识别 trace_id 和 request_id。"
-            "这些标识符通常用于关联分布式系统中的请求调用链。"
-            "输出必须是 JSON 格式，不要包含多余文本。"
-        )
-
-        user = (
-            "请从以下错误日志中识别 trace_id 和 request_id。\n\n"
-            f"错误日志：\n{log_preview}\n\n"
-            "请分析日志内容，找出最可能是 trace_id 和 request_id 的值。\n"
-            "常见的格式包括：\n"
-            "- UUID 格式：36dfc57c26a84cdcbdc608d8e1d31ee3\n"
-            "- 长字符串：0a690987177010502886340281\n"
-            "- 在日志中以 [trace_id: xxx] 或 trace_id=xxx 等形式出现\n"
-            "- 在 JSON 格式的日志中以 trace_id 或 request_id 字段出现\n\n"
-            "如果找不到，返回 null。\n\n"
-            "请输出 JSON 格式：\n"
-            '{"trace_id": "xxx 或 null", "request_id": "xxx 或 null"}'
-        )
+        system = prompts.ENRICHER_TRACE_ID_SYSTEM_PROMPT
+        user = prompts.ENRICHER_TRACE_ID_USER_PROMPT.format(log_preview=log_preview)
 
         try:
             logger.debug("[LogEnricher] 调用 LLM 提取 trace_id/request_id")
@@ -207,7 +192,7 @@ class LogEnricher:
             logger.debug(f"[LogEnricher] LLM 返回原始结果：{raw[:200]}...")
             
             # 尝试解析 JSON
-            parsed = self._try_parse_json(raw)
+            parsed = parse_json_markdown(raw)
             if isinstance(parsed, dict):
                 result = {}
                 trace_id = parsed.get("trace_id")
@@ -310,19 +295,3 @@ class LogEnricher:
             records=all_records,
             raw={"base": base.raw, "chain": chain.raw},
         )
-
-    def _try_parse_json(self, raw: str) -> dict | None:
-        """尝试解析 JSON（支持多种格式）"""
-        raw = raw.strip()
-        try:
-            return json.loads(raw)
-        except Exception:
-            pass
-        # 尝试提取 JSON 块
-        m = re.search(r"\{[\s\S]*\}", raw)
-        if m:
-            try:
-                return json.loads(m.group(0))
-            except Exception:
-                pass
-        return None
