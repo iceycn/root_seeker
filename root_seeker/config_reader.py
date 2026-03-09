@@ -1,10 +1,13 @@
 """配置读取器：支持 file / database 双模式，MySQL 模式下从 app_config 表读取配置。"""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -94,8 +97,13 @@ class ConfigReader:
                         database=config_db.get("database", "root_seeker"),
                     )
                     raw = _deep_merge(raw, db_config)
-                except Exception:
-                    pass  # 数据库不可用时回退到 yaml
+                    logger.info("[ConfigReader] 已从 app_config 表加载配置并合并")
+                except Exception as e:
+                    logger.warning(
+                        "[ConfigReader] 从数据库加载配置失败，回退到 YAML: %s",
+                        e,
+                        exc_info=True,
+                    )
 
         # 移除 bootstrap 字段，避免 Pydantic 校验
         raw.pop("config_source", None)

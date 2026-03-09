@@ -57,6 +57,7 @@ docker compose down
 ## 配置说明
 
 - **Docker 默认使用 MySQL 模式**：`config_source=database`，配置存储在 `app_config` 表，初始化时已写入完整 Demo（LLM、Embedding、Qdrant、Zoekt、阿里云 SLS、企微、钉钉、Git 仓库发现），可在 Admin「Git 源码管理 → AI应用配置」中查看/编辑
+- **重要**：在 Admin 中修改 LLM、Embedding 等配置后，需**重启 RootSeeker 容器**才能生效：`docker compose restart root-seeker`
 - **Demo 仓库**：预置 `psf/requests`，可在 Admin「Git 源码管理」中同步并建索引
 - RootSeeker 容器默认挂载 [config.docker.yaml](file:///Users/beisen/PycharmProjects/root_seek/root_seeker_docker/config.docker.yaml) 到 `/app/config.yaml`
 - **Zoekt 索引**：初始为空。同步仓库后，在 Admin「Git 源码管理」中点击对应仓库的「Zoekt 索引」即可（RootSeeker 容器已内置 zoekt-index，索引写入与 zoekt-webserver 共享的目录）

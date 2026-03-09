@@ -1538,9 +1538,16 @@ def create_app() -> FastAPI:
 
         @app.post("/app-config/notify")
         async def app_config_notify(_: None = Depends(require_api_key)) -> dict:
-            """配置变更通知：若依等管理端保存配置后调用，RootSeeker 可据此做热重载等。"""
-            app_logger.info("[App] 收到配置变更通知")
-            return {"status": "ok", "message": "config change notified"}
+            """配置变更通知：若依等管理端保存配置后调用。
+            LLM/Embedding 等配置在启动时加载，修改后需重启 RootSeeker 容器才能生效。"""
+            app_logger.info(
+                "[App] 收到配置变更通知（LLM/Embedding 等需重启 RootSeeker 容器后生效）"
+            )
+            return {
+                "status": "ok",
+                "message": "config change notified",
+                "restart_required": "LLM/Embedding 等配置需重启 RootSeeker 容器后生效",
+            }
 
     @app.get("/analysis/{analysis_id}")
     async def get_analysis(analysis_id: str, _: None = Depends(require_api_key)) -> dict:
