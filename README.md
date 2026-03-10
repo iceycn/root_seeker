@@ -169,7 +169,7 @@ bash scripts/start-all-one-click.sh
 
 ## 📄 License
 
-Apache 2.0 License © 2024 RootSeeker Team
+Apache 2.0 License © 2026 RootSeeker Team
 
 ---
 
