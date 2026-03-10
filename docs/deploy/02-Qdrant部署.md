@@ -2,7 +2,7 @@
 
 Qdrant 用作代码向量库，RootSeeker 在「建向量索引」和「分析时语义检索」时访问。
 
-> **安装指南**：若需从零安装 Qdrant，见 [依赖组件安装指南](../INSTALL_DEPENDENCIES.md#二qdrant-安装)。
+> **安装指南**：若需从零安装 Qdrant，见 [依赖组件安装指南](../安装依赖.md#二qdrant-安装)。
 
 ## 1. 适用环境
 

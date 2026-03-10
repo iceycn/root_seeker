@@ -30,3 +30,6 @@ venv/
 tmp_sls_log.json
 .qdrant-initialized
 .trae/
+
+# VSCode
+.vscode/

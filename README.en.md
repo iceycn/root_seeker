@@ -120,11 +120,11 @@ bash scripts/start-all-one-click.sh
 
 We provide detailed component documentation to help you build a production-grade environment from scratch:
 
-*   [**Config Reference**](docs/components/00-config-reference.md): `config.yaml` Explained
-*   [**Aliyun SLS Integration**](docs/components/03-aliyun-sls.md): Log Source Configuration
-*   [**LLM Configuration**](docs/components/04-llm.md): DeepSeek/OpenAI/Doubao Access
-*   [**Notification Configuration**](docs/components/07-notifiers.md): WeCom/DingTalk Bots
-*   [**More Docs...**](docs/DOCUMENTATION_INDEX.md)
+*   [**Config Reference**](docs/components/en/00-config-reference.md): `config.yaml` Explained
+*   [**Aliyun SLS Integration**](docs/components/en/03-aliyun-sls.md): Log Source Configuration
+*   [**LLM Configuration**](docs/components/en/04-llm.md): DeepSeek/OpenAI/Doubao Access
+*   [**Notification Configuration**](docs/components/en/07-notifiers.md): WeCom/DingTalk Bots
+*   [**More Docs...**](docs/文档索引.md)
 
 ---
 

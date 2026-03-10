@@ -9,7 +9,7 @@
 | Docker 全栈（推荐） | 想快速跑通全套能力 | Admin 8088 | 容器内置并自动初始化 |
 | 本机运行 Admin | 已有 MySQL，或需要接公司内网库 | Admin 8080 | 自备并手动初始化 |
 
-端口总览见 [PORTS_AND_ENDPOINTS.md](../PORTS_AND_ENDPOINTS.md)。
+端口总览见 [端口与端点.md](../端口与端点.md)。
 
 ## 2. Docker 全栈（开箱即用）
 
@@ -66,4 +66,4 @@ RootSeeker 索引完成后回调 Admin：
 
 - `http://<admin_host>:<admin_port>/gitsource/index/callback`
 
-对接协议见 [callback-integration.md](../callback-integration.md)。
+对接协议见 [回调集成.md](../回调集成.md)。

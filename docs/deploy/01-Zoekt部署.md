@@ -2,7 +2,7 @@
 
 Zoekt 用于代码词法/符号/正则检索，RootSeeker 通过 HTTP 调用其 `/api/search` 接口。
 
-> **安装指南**：若需从零安装 Zoekt，见 [依赖组件安装指南](../INSTALL_DEPENDENCIES.md#三zoekt-安装)。
+> **安装指南**：若需从零安装 Zoekt，见 [依赖组件安装指南](../安装依赖.md#三zoekt-安装)。
 
 ## 1. 适用环境
 
@@ -72,7 +72,7 @@ zoekt:
 ```
 
 - 应用内通过 `ZoektClient` 调用 `POST .../api/search`，传 `Q`（查询串）与 `Opts`。
-- 若多仓库共用一个 Zoekt 实例，当前实现未按 repo 过滤，检索结果为全索引；后续可在 `ZoektClient.search` 中增加 `RepoIDs` 或按名称过滤（见 [OPTIMIZATION_CHECKLIST.md](../OPTIMIZATION_CHECKLIST.md)）。
+- 若多仓库共用一个 Zoekt 实例，当前实现未按 repo 过滤，检索结果为全索引；后续可在 `ZoektClient.search` 中增加 `RepoIDs` 或按名称过滤（见 [优化清单.md](../优化清单.md)）。
 
 ## 7. 索引更新（仓库更新后）
 

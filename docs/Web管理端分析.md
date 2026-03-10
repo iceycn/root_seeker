@@ -157,7 +157,7 @@ WebAdmin (Jinja2)  →  GitSourceService  →  MySQLStorageBackend
 |------|----------|
 | 友好界面 + 现成脚手架 | **FastAPI-Amis-Admin**（Amis UI + `faa new` CLI） |
 | 轻量、Tabler 风格 | **SQLAdmin** |
-| **新开项目 + 异构架构** | **若依（RuoYi）**——独立 Java 项目，共享 MySQL，见 [WEBADMIN_RUOYI_ARCHITECTURE.md](./WEBADMIN_RUOYI_ARCHITECTURE.md) |
+| **新开项目 + 异构架构** | **若依（RuoYi）**——独立 Java 项目，共享 MySQL，见 [Web管理端若依架构.md](./Web管理端若依架构.md) |
 | 零 ORM、最小依赖 | 自建 Jinja2（不推荐，界面需自搭） |
 
 ---

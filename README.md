@@ -122,11 +122,11 @@ bash scripts/start-all-one-click.sh
 
 我们提供了详尽的组件文档，帮助你从零开始搭建生产级环境：
 
-*   [**配置参考**](docs/components/00-config-reference.md): `config.yaml` 全解
-*   [**阿里云 SLS 集成**](docs/components/03-aliyun-sls.md): 日志源配置
-*   [**LLM 配置**](docs/components/04-llm.md): DeepSeek/OpenAI/豆包接入
-*   [**通知配置**](docs/components/07-notifiers.md): 企微/钉钉机器人
-*   [**更多文档...**](docs/DOCUMENTATION_INDEX.md)
+*   [**配置参考**](docs/components/00-配置参考.md): `config.yaml` 全解
+*   [**阿里云 SLS 集成**](docs/components/03-阿里云SLS.md): 日志源配置
+*   [**LLM 配置**](docs/components/04-LLM配置.md): DeepSeek/OpenAI/豆包接入
+*   [**通知配置**](docs/components/07-通知配置.md): 企微/钉钉机器人
+*   [**更多文档...**](docs/文档索引.md)
 
 ---
 

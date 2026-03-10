@@ -87,7 +87,7 @@
 
 ### 3.3 索引状态乐观更新
 
-启用/禁用、索引、清除等操作时，RuoYi **先更新 `repo_index_status` 为「索引中」或「清理中」**，再调 RootSeeker 接口。RootSeeker 任务完成后 POST 回调，RuoYi 更新为「已索引」或「未索引」。详见 [callback-integration.md](callback-integration.md)。
+启用/禁用、索引、清除等操作时，RuoYi **先更新 `repo_index_status` 为「索引中」或「清理中」**，再调 RootSeeker 接口。RootSeeker 任务完成后 POST 回调，RuoYi 更新为「已索引」或「未索引」。详见 [回调集成.md](回调集成.md)。
 
 ---
 

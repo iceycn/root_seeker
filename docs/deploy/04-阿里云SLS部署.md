@@ -46,7 +46,7 @@ sql_templates:
 ## 5. 时间窗说明
 
 - enricher 会根据事件的 `timestamp` 与配置的时间窗（如 300 秒）计算 `start_ts`、`end_ts`，并替换到 SQL 模板中。
-- **注意**：当前 `providers/sls.py` 内调用 SLS 的 `get_log` 时，若仍使用「当前时间」作为 from_time/to_time，则与事件时间不一致，会导致补全不到正确时间段日志。建议按 [OPTIMIZATION_CHECKLIST.md](../OPTIMIZATION_CHECKLIST.md) 将 `from_ts`/`to_ts` 传入 SLS 查询接口（若 SDK 支持），或使用 SLS 的查询 API 并传入模板中已替换好的时间范围。
+- **注意**：当前 `providers/sls.py` 内调用 SLS 的 `get_log` 时，若仍使用「当前时间」作为 from_time/to_time，则与事件时间不一致，会导致补全不到正确时间段日志。建议按 [优化清单.md](../优化清单.md) 将 `from_ts`/`to_ts` 传入 SLS 查询接口（若 SDK 支持），或使用 SLS 的查询 API 并传入模板中已替换好的时间范围。
 
 ## 6. 安全
 
