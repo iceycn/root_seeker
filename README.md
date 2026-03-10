@@ -2,7 +2,7 @@
 
 <p align="center">
     <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python Version">
-    <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
+    <img src="https://img.shields.io/badge/license-Apache-green.svg" alt="License">
     <img src="https://img.shields.io/badge/docker-ready-blue.svg" alt="Docker">
 </p>
 
@@ -169,7 +169,7 @@ bash scripts/start-all-one-click.sh
 
 ## 📄 License
 
-MIT License © 2024 RootSeeker Team
+Apache 2.0 License © 2024 RootSeeker Team
 
 ---
 
