@@ -2,8 +2,12 @@
 
 <p align="center">
     <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python Version">
-    <img src="https://img.shields.io/badge/license-Apache-green.svg" alt="License">
+    <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="License">
     <img src="https://img.shields.io/badge/docker-ready-blue.svg" alt="Docker">
+</p>
+
+<p align="center">
+  <strong><a href="README.md">中文</a></strong> | <strong><a href="README.en.md">English</a></strong>
 </p>
 
 **RootSeeker** 是一个面向公司内网的 **AI 驱动错误分析与根因发现服务**。它不仅仅是一个日志解析器，更是一个拥有代码理解能力的智能 SRE。
@@ -165,7 +169,7 @@ bash scripts/start-all-one-click.sh
 
 ## 📄 License
 
-Apache 2.0 License © 2026 RootSeeker Team
+MIT License © 2024 RootSeeker Team
 
 ---
 
