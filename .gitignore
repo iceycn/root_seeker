@@ -33,3 +33,9 @@ tmp_sls_log.json
 
 # VSCode
 .vscode/
+
+# Dify related docs
+*Dify*.md
+
+# Design docs
+docs/设计与需求.md
