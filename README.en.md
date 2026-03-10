@@ -56,15 +56,16 @@ Traditional troubleshooting often relies on manual experience, requiring SREs to
 
 ```mermaid
 graph LR
-    Log[Error Log (SLS)] --> Ingest[Data Ingestion]
-    Ingest --> Enrich[Log Enrichment (TraceID)]
-    Enrich --> Retrieval[Dual Retrieval]
-    Retrieval --> Zoekt[Zoekt (Exact)]
-    Retrieval --> Qdrant[Qdrant (Semantic)]
-    Zoekt & Qdrant --> Context[Build Context]
-    Context --> LLM[LLM Reasoning]
-    LLM --> Report[Generate Report]
-    Report --> Notify[WeCom/DingTalk Notification]
+    Log["Error Log (SLS)"] --> Ingest["Data Ingestion"]
+    Ingest --> Enrich["Log Enrichment (TraceID)"]
+    Enrich --> Retrieval["Dual Retrieval"]
+    Retrieval --> Zoekt["Zoekt (Exact)"]
+    Retrieval --> Qdrant["Qdrant (Semantic)"]
+    Zoekt --> Context["Build Context"]
+    Qdrant --> Context
+    Context --> LLM["LLM Reasoning"]
+    LLM --> Report["Generate Report"]
+    Report --> Notify["WeCom/DingTalk Notification"]
 ```
 
 1.  **Ingest & Enrich**: Receive errors, automatically backtrack TraceID to pull context.

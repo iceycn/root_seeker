@@ -58,15 +58,16 @@
 
 ```mermaid
 graph LR
-    Log[错误日志 (SLS)] --> Ingest[数据摄入]
-    Ingest --> Enrich[日志补全 (TraceID)]
-    Enrich --> Retrieval[双路检索]
-    Retrieval --> Zoekt[Zoekt (精确)]
-    Retrieval --> Qdrant[Qdrant (语义)]
-    Zoekt & Qdrant --> Context[构建上下文]
-    Context --> LLM[大模型推理]
-    LLM --> Report[生成报告]
-    Report --> Notify[企微/钉钉通知]
+    Log["错误日志 (SLS)"] --> Ingest["数据摄入"]
+    Ingest --> Enrich["日志补全 (TraceID)"]
+    Enrich --> Retrieval["双路检索"]
+    Retrieval --> Zoekt["Zoekt (精确)"]
+    Retrieval --> Qdrant["Qdrant (语义)"]
+    Zoekt --> Context["构建上下文"]
+    Qdrant --> Context
+    Context --> LLM["大模型推理"]
+    LLM --> Report["生成报告"]
+    Report --> Notify["企微/钉钉通知"]
 ```
 
 1.  **Ingest & Enrich**：接收报错，自动回溯 TraceID 拉取前后文。
