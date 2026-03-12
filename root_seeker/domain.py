@@ -22,6 +22,7 @@ class NormalizedErrorEvent(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
     tags: dict[str, Any] = Field(default_factory=dict)
     repo_id: str | None = Field(default=None, description="关联的 git_source_repos.id")
+    correlation_id: str | None = Field(default=None, description="链路追踪 ID，ingest→queue→analyze 贯通")
 
 
 class LogRecord(BaseModel):
@@ -79,6 +80,7 @@ class AnalysisReport(BaseModel):
     service_name: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(tz=timezone.utc))
     summary: str
+    correlation_id: str | None = Field(default=None, description="链路追踪 ID，与 ingest 时的 correlation_id 一致")
     hypotheses: list[str] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
     evidence: EvidencePack | None = None
@@ -88,4 +90,8 @@ class AnalysisReport(BaseModel):
     business_impact: str | None = Field(
         default=None,
         description="业务影响程度：高|中|低|无；如「无：异常被捕获不影响主流程」",
+    )
+    need_more_evidence: list[str] | None = Field(
+        default=None,
+        description="证据不足时 LLM 输出的补充检索关键词，供 Orchestrator 触发下一轮",
     )

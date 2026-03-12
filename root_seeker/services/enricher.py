@@ -101,18 +101,26 @@ class LogEnricher:
 
         start = event.timestamp - timedelta(seconds=self._cfg.time_window_seconds)
         end = event.timestamp + timedelta(seconds=self._cfg.time_window_seconds)
+        from_ts = int(start.timestamp())
+        to_ts = int(end.timestamp())
         params = {
             "service_name": event.service_name,
             "error_log": event.error_log,
-            "start_ts": int(start.timestamp()),
-            "end_ts": int(end.timestamp()),
+            "start_ts": from_ts,
+            "end_ts": to_ts,
         }
         query = template.render(params) if template is not None else ""
+        err_preview = (event.error_log or "")[:200]
+        logger.info(
+            f"[LogEnricher] 基础日志补全请求参数: query_key={query_key}, from_ts={from_ts}, to_ts={to_ts}, "
+            f"service_name={event.service_name}, error_log_preview={err_preview!r}..."
+        )
+        logger.debug(f"[LogEnricher] 基础日志补全 SQL: {query[:500]}..." if len(query) > 500 else f"[LogEnricher] 基础日志补全 SQL: {query}")
         return await self._provider.query(
             query_key=query_key,
             query=query,
-            from_ts=int(start.timestamp()),
-            to_ts=int(end.timestamp()),
+            from_ts=from_ts,
+            to_ts=to_ts,
         )
 
     async def _extract_trace_ids(self, event: NormalizedErrorEvent) -> tuple[str | None, str | None]:
@@ -189,7 +197,7 @@ class LogEnricher:
         try:
             logger.debug("[LogEnricher] 调用 LLM 提取 trace_id/request_id")
             raw = await self._llm.generate(system=system, user=user)
-            logger.debug(f"[LogEnricher] LLM 返回原始结果：{raw[:200]}...")
+            logger.debug("[LogEnricher] trace_id 提取 AI 返回:\n%s", raw)
             
             # 尝试解析 JSON
             parsed = parse_json_markdown(raw)
@@ -272,7 +280,10 @@ class LogEnricher:
         time_window = min(self._cfg.trace_chain_time_window_seconds, 300)
         start = event.timestamp - timedelta(seconds=time_window // 2)
         end = event.timestamp + timedelta(seconds=time_window // 2)
-        
+        logger.info(
+            f"[LogEnricher] 调用链补充请求参数: trace_id={trace_id}, request_id={request_id}, "
+            f"from_time={start.isoformat()}, to_time={end.isoformat()}"
+        )
         # 调用 trace_chain_provider 查询
         return await self._trace_chain_provider.query_by_trace_id(
             trace_id=trace_id,

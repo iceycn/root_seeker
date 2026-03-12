@@ -30,6 +30,7 @@ class AliyunSlsConfig(BaseModel):
     project: str
     logstore: str
     topic: str | None = None
+    timeout_seconds: int = Field(default=30, description="SLS 查询超时（秒），与 httpx/Qdrant 超时策略一致")
 
 
 class EnrichmentConfig(BaseModel):
@@ -45,6 +46,7 @@ class SqlTemplateConfig(BaseModel):
 
 class ZoektConfig(BaseModel):
     api_base_url: HttpUrl
+    timeout_seconds: float = Field(default=30.0, description="Zoekt 请求超时（秒），与 httpx/Qdrant 超时策略一致")
 
 
 class WeComConfig(BaseModel):
@@ -88,6 +90,38 @@ class QdrantStoreConfig(BaseModel):
     api_key: str | None = None
     collection: str = "code_chunks"
     timeout: int = Field(default=30, description="Qdrant 请求超时（秒），默认 30，避免 count 等操作超时导致 500")
+
+
+class McpServerConfig(BaseModel):
+    """外部 MCP Server 配置。支持 stdio（子进程）与 streamable-http（HTTP 端点）。"""
+    command: str = Field(default="", description="stdio 时：可执行命令，如 python、npx、uvx")
+    args: list[str] = Field(default_factory=list, description="stdio 时：命令参数")
+    env: dict[str, str] = Field(default_factory=dict, description="stdio 时：环境变量，支持 ENV: 前缀引用")
+    enabled: bool = True
+    transport: str = Field(
+        default="stdio",
+        description="传输方式：stdio（子进程 stdin/stdout）| streamable-http（HTTP 端点）",
+    )
+    url: str | None = Field(default=None, description="streamable-http 时：MCP 端点 URL，如 http://localhost:8000/mcp")
+
+
+class McpConfig(BaseModel):
+    servers: dict[str, McpServerConfig] = Field(default_factory=dict)
+
+
+class AiProviderConfig(BaseModel):
+    kind: str = "openai"  # openai, anthropic, deepseek, doubao
+    api_key: str = Field(..., description="支持 ENV: 开头引用环境变量")
+    base_url: str | None = None
+    model: str
+    timeout: int = 60
+    temperature: float = 0.2
+    max_tokens: int | None = None
+
+
+class AiGatewayConfig(BaseModel):
+    default_provider: str = "main"
+    providers: dict[str, AiProviderConfig] = Field(default_factory=dict)
 
 
 class GitSourceConfig(BaseModel):
@@ -135,6 +169,8 @@ class AppConfig(BaseModel):
     embedding: EmbeddingConfig | None = None
     qdrant: QdrantStoreConfig | None = None
     git_source: GitSourceConfig | None = None
+    mcp: McpConfig = Field(default_factory=McpConfig)
+    ai: AiGatewayConfig = Field(default_factory=AiGatewayConfig)
 
     evidence_level: str = Field(default="L3", description="L1|L2|L3")
     max_evidence_files: int = 12
@@ -152,6 +188,10 @@ class AppConfig(BaseModel):
     llm_multi_turn_staged_round3: bool = Field(default=True, description="分阶段模式：阶段3生成建议")
     llm_multi_turn_self_refine_review_rounds: int = Field(default=1, description="Self-Refine 模式：审查轮数")
     llm_multi_turn_self_refine_improvement_threshold: float = Field(default=0.1, description="Self-Refine 模式：改进阈值（如果改进幅度小于此值，提前终止）")
+    ai_driven_enabled: bool = Field(default=True, description="为 true 时优先使用 AI 驱动主流程（Plan->Act->Synthesize），失败回退直连；默认 true 统一走 AI 驱动")
+    max_analysis_rounds: int = Field(default=20, description="AI 驱动多轮迭代最大轮数，默认 20")
+    max_evidence_collection_depth: int = Field(default=20, description="NEED_MORE_EVIDENCE 证据收集递归最大深度，默认 20")
+    max_evidence_total_chars: int = Field(default=80_000, description="送入 LLM 的证据总字符上限，避免 400 超长请求；默认 80000")
 
     # 日志链查询配置
     trace_chain_enabled: bool = Field(default=True, description="是否启用调用链日志查询（使用 LLM 提取 trace_id/request_id）")
@@ -182,6 +222,20 @@ def load_config() -> LoadedConfig:
 
     settings = Settings()
     raw = ConfigReader(config_path=settings.config_path).read()
+    app = AppConfig.model_validate(raw)
+    return LoadedConfig(settings=settings, app=app)
+
+
+def reload_config() -> LoadedConfig:
+    """
+    热更新：重新读取配置（并发安全）。
+    使用 config_reader._reload_lock 保护，返回全新 LoadedConfig。
+    调用方需将返回值替换到各组件引用，以保障缓存一致性。
+    """
+    from root_seeker.config_reader import reload_config_raw
+
+    settings = Settings()
+    raw = reload_config_raw(settings.config_path)
     app = AppConfig.model_validate(raw)
     return LoadedConfig(settings=settings, app=app)
 
