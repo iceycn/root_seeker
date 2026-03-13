@@ -28,8 +28,9 @@ aliyun_sls:
   topic: null
 
 sql_templates:
+  # 基础日志补全：必须包含 trace_id 过滤，仅查询含 trace_id 的日志
   - query_key: "default_error_context"
-    query: "level:ERROR and service:{service_name} | select * from log where __time__ >= {start_ts} and __time__ <= {end_ts} limit 200"
+    query: "trace_id:{trace_id} and level:ERROR and service:{service_name} | select * from log where __time__ >= {start_ts} and __time__ <= {end_ts} limit 200"
   # 调用链日志查询（trace_id/request_id 用 #"value" 短语语法避免阿里云分词）
   - query_key: "trace_chain"
     query: "(trace_id:{trace_id} or request_id:{request_id}) | select * from log where __time__ >= {start_ts} and __time__ <= {end_ts} order by __time__ asc limit 500"
@@ -84,6 +85,30 @@ llm_multi_turn_enable_self_review: true   # 是否启用自我审查（仅 hybri
 # Self-Refine 模式配置（self_refine）
 # llm_multi_turn_self_refine_review_rounds: 1   # 审查轮数
 # llm_multi_turn_self_refine_improvement_threshold: 0.1   # 改进阈值（如果改进幅度小于此值，提前终止）
+
+# AI 驱动主流程（v2.0.0）：为 true 时优先使用 AiOrchestrator（Plan->Act->Synthesize），失败自动回退直连
+# ai_driven_enabled: true   # 默认 true，统一走 AI 驱动（Plan->Act->Synthesize）；需 MCP 网关与 LLM 均已配置；失败时回退直连
+# max_analysis_rounds: 20    # AI 驱动多轮迭代最大轮数，每轮结束由 AI 决策是否继续
+# max_evidence_collection_depth: 20   # NEED_MORE_EVIDENCE 证据收集递归最大深度
+# max_evidence_total_chars: 80000     # 送入 LLM 的证据总字符上限，避免 400 超长请求
+
+# 外部 MCP Server 可选接入（需 pip install root-seeker[mcp]）
+# 支持 stdio（子进程）与 streamable-http（HTTP 端点）；command 含 npx 时会探测 npx 可用性
+# mcp:
+#   servers:
+#     aliyun:   # 阿里云可观测 MCP Server（pip install mcp-server-aliyun-observability）
+#       command: "python"
+#       args: ["-m", "mcp_server_aliyun_observability"]
+#       env:   # 凭证通过环境变量传递，支持 ENV: 前缀引用
+#         ALIYUN_ACCESS_KEY_ID: "ENV:ALIYUN_ACCESS_KEY_ID"
+#         ALIYUN_ACCESS_KEY_SECRET: "ENV:ALIYUN_ACCESS_KEY_SECRET"
+#       transport: "stdio"
+#       enabled: true
+#     # streamable-http 示例（阿里云 Server 以 SSE 模式启动后）：
+#     # aliyun_http:
+#     #   transport: "streamable-http"
+#     #   url: "http://localhost:8000/mcp"
+#     #   enabled: true
 
 # 日志链查询配置（使用 LLM 智能提取 trace_id/request_id）
 # trace_chain_enabled: true   # 是否启用调用链日志查询（默认启用）
@@ -153,3 +178,8 @@ max_evidence_files: 12
 max_evidence_chunks: 24
 max_context_chars_total: 160000
 max_context_chars_per_file: 24000
+
+# Hook 脚本（可选）
+hooks:
+  enabled: true
+  dirs: []   # 额外目录，如 ["data/hooks"]；空则仅用 ~/.rootseek/hooks

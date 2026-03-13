@@ -77,3 +77,20 @@ def parse_json_markdown(text: str) -> Any:
 
     logger.warning(f"Failed to parse JSON from text: {text[:100]}...")
     return {}
+
+
+_SENSITIVE_PATTERNS = [
+    (re.compile(r"(?i)(access[_-]?key|api[_-]?key)\s*[:=]\s*['\"]?[\w\-]{8,}['\"]?", re.I), "[REDACTED:key]"),
+    (re.compile(r"(?i)(secret|password)\s*[:=]\s*['\"]?[^\s'\"]+['\"]?", re.I), "[REDACTED:secret]"),
+    (re.compile(r"(?i)bearer\s+[\w\-\.]+", re.I), "[REDACTED:token]"),
+    (re.compile(r"(?i)(mysql|postgres|mongodb|redis)://[^\s]+", re.I), "[REDACTED:connection]"),
+]
+
+
+def redact_sensitive(text: str | None) -> str:
+    """脱敏：替换 AK/SK、token、连接串等敏感信息。"""
+    if not text:
+        return text or ""
+    for pat, repl in _SENSITIVE_PATTERNS:
+        text = pat.sub(repl, text)
+    return text

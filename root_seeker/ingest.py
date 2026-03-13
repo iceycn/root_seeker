@@ -106,7 +106,7 @@ def _parse_timestamp(v: Any) -> datetime | None:
     return None
 
 
-def to_normalized_event(event: IngestEvent) -> NormalizedErrorEvent:
+def to_normalized_event(event: IngestEvent, correlation_id: str | None = None) -> NormalizedErrorEvent:
     """IngestEvent 转为 NormalizedErrorEvent。"""
     return NormalizedErrorEvent(
         service_name=event.service_name,
@@ -115,4 +115,5 @@ def to_normalized_event(event: IngestEvent) -> NormalizedErrorEvent:
         timestamp=event.timestamp or datetime.now(tz=timezone.utc),
         tags=event.tags,
         repo_id=event.repo_id,
+        correlation_id=correlation_id,
     )

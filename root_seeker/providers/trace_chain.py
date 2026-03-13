@@ -81,6 +81,7 @@ class AliyunTraceChainProviderConfig:
     logstore: str
     topic: str | None = None
     max_time_window_seconds: int = 300  # 最大时间窗口（秒），默认5分钟
+    timeout_seconds: int = 30  # 单次查询超时（秒），与 httpx/Qdrant 超时策略一致
 
 
 class AliyunTraceChainProvider:
@@ -185,7 +186,10 @@ class AliyunTraceChainProvider:
             )
         
         try:
-            resp = await asyncio.to_thread(_do_query)
+            resp = await asyncio.wait_for(
+                asyncio.to_thread(_do_query),
+                timeout=float(self._cfg.timeout_seconds),
+            )
             
             records: list[LogRecord] = []
             for item in resp.get_logs():

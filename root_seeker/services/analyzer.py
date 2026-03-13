@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -14,6 +14,7 @@ from root_seeker.domain import (
     CandidateRepo,
     EvidencePack,
     LogBundle,
+    LogRecord,
     NormalizedErrorEvent,
     ZoektHit,
 )
@@ -29,7 +30,7 @@ from root_seeker.services.call_graph_expander import CallGraphExpander, CallGrap
 from root_seeker.services.conversation import ConversationHistory
 from root_seeker.storage.analysis_store import AnalysisStore
 from root_seeker import prompts
-from root_seeker.utils import parse_json_markdown
+from root_seeker.utils import parse_json_markdown, redact_sensitive
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,16 @@ class AnalyzerConfig:
     # 证据不足时补充检索：LLM 输出 NEED_MORE_EVIDENCE 时触发
     supplementary_evidence_enabled: bool = True
     supplementary_evidence_max_retries: int = 1
+    # AI 驱动主流程：为 true 时优先使用 AiOrchestrator（Plan->Act->Synthesize），失败回退直连；默认 true 统一走 AI 驱动
+    ai_driven_enabled: bool = True
+    max_analysis_rounds: int = 20
+    max_evidence_collection_depth: int = 20
+    max_evidence_total_chars: int = 80_000
+    # Hook 配置
+    hooks_enabled: bool = True
+    hooks_dirs: list[str] = field(default_factory=list)
+    # 与 job_queue 超时对齐，避免 orchestrator 内部 300s 而 job 160s 导致不一致
+    analysis_timeout_seconds: int = 160
 
 
 class AnalyzerService:
@@ -90,6 +101,8 @@ class AnalyzerService:
         llm: LLMProvider | None,
         notifiers: list[Notifier],
         store: AnalysisStore,
+        mcp_gateway: Any | None = None,  # McpGateway
+        audit: Any | None = None,  # AuditLogger
     ):
         self._cfg = cfg
         self._router = router
@@ -101,6 +114,8 @@ class AnalyzerService:
         self._llm = llm
         self._notifiers = notifiers or []
         self._store = store
+        self._mcp_gateway = mcp_gateway
+        self._audit = audit
 
         # 方法级调用链展开器
         self._call_graph_expander = None
@@ -122,10 +137,70 @@ class AnalyzerService:
                 tree_sitter_chunker=tree_sitter_chunker,
             )
 
-    async def analyze(self, event: NormalizedErrorEvent, *, analysis_id: str | None = None) -> AnalysisReport:
+    async def analyze(
+        self,
+        event: NormalizedErrorEvent,
+        *,
+        analysis_id: str | None = None,
+        skip_ai_driven: bool = False,
+        use_multi_turn_override: bool | None = None,
+    ) -> AnalysisReport:
+        """分析入口。ai_driven_enabled 时优先走 AiOrchestrator，失败回退直连。skip_ai_driven=True 时强制直连（供 analysis.run 等避免循环）。
+        use_multi_turn_override：由 Plan 决定是否多轮对话，None 则用配置默认值。"""
         analysis_id = analysis_id or uuid.uuid4().hex
-        logger.info(f"[Analyzer] 开始分析，analysis_id={analysis_id}, service={event.service_name}")
+        cid = event.correlation_id or analysis_id
+        logger.info(f"[Analyzer] 开始分析，analysis_id={analysis_id}, correlation_id={cid}, service={event.service_name}")
 
+        use_ai_driven = (
+            not skip_ai_driven
+            and self._cfg.ai_driven_enabled
+            and self._mcp_gateway is not None
+            and self._llm is not None
+        )
+        if use_ai_driven:
+            try:
+                from root_seeker.ai.orchestrator import AiOrchestrator, OrchestratorConfig
+
+                hook_hub = None
+                if self._cfg.hooks_enabled:
+                    from root_seeker.hooks.hub import HookHub
+                    hook_hub = HookHub(
+                        enabled=True,
+                        hooks_dirs=self._cfg.hooks_dirs or [],
+                    )
+                orch = AiOrchestrator(
+                    mcp_gateway=self._mcp_gateway,
+                    llm=self._llm,
+                    config=OrchestratorConfig(
+                        max_tool_calls=8,
+                        max_analysis_rounds=self._cfg.max_analysis_rounds,
+                        max_evidence_collection_depth=self._cfg.max_evidence_collection_depth,
+                        max_evidence_total_chars=self._cfg.max_evidence_total_chars,
+                        llm_multi_turn_enabled=self._cfg.llm_multi_turn_enabled,
+                        total_timeout_seconds=float(getattr(self._cfg, "analysis_timeout_seconds", 160)),
+                    ),
+                    audit=self._audit,
+                    hook_hub=hook_hub,
+                )
+                report = await orch.analyze(event, analysis_id=analysis_id)
+                self._store.save(report)
+                await self._maybe_notify(report)
+                logger.info(f"[Analyzer] AI 驱动分析完成，analysis_id={analysis_id}")
+                return report
+            except Exception as e:
+                logger.warning(f"[Analyzer] AI 驱动分析失败，回退直连路径: {e}", exc_info=True)
+
+        return await self._analyze_direct(event, analysis_id, use_multi_turn_override=use_multi_turn_override)
+
+    async def _analyze_direct(
+        self,
+        event: NormalizedErrorEvent,
+        analysis_id: str,
+        *,
+        use_multi_turn_override: bool | None = None,
+    ) -> AnalysisReport:
+        """直连分析路径：enrich -> zoekt -> vector -> evidence -> LLM。
+        use_multi_turn_override：由 Plan 决定是否多轮，None 则用配置。"""
         candidates = self._router.route(event.service_name)
         if not candidates:
             # 兜底：从错误日志推断 service_name
@@ -140,6 +215,7 @@ class AnalyzerService:
                 summary="未找到该 service_name 对应的仓库配置或推断结果。",
                 hypotheses=[],
                 suggestions=["请先为该 service_name 配置仓库映射（git_url/local_dir）。"],
+                correlation_id=event.correlation_id or analysis_id,
             )
             self._store.save(report)
             await self._maybe_notify(report)
@@ -157,9 +233,10 @@ class AnalyzerService:
             query = self._build_zoekt_query(event, repo_name=repo.service_name)
             logger.info(f"[Analyzer] Zoekt 查询：{query}")
             try:
-                raw_hits = await self._zoekt.search(query=query)
+                raw_hits = await self._zoekt.search(query=query, max_matches=80)
                 hits = self._filter_zoekt_hits_for_repo(raw_hits, repo.local_dir, event.service_name)
                 hits = self._filter_and_sort_zoekt_hits(hits)
+                hits = hits[:50]
                 logger.info(f"[Analyzer] Zoekt 搜索完成，原始命中={len(raw_hits)}, 过滤后={len(hits)}")
                 if len(raw_hits) == 0:
                     logger.warning(
@@ -255,13 +332,18 @@ class AnalyzerService:
                         )
                         logger.info(f"[Analyzer] 从关联服务 {rel_name} 追加了 {len(rel_hits[:self._cfg.cross_repo_max_chunks_per_service])} 条证据")
 
-        logger.info(f"[Analyzer] 开始生成分析报告，多轮对话模式={self._cfg.llm_multi_turn_mode if self._cfg.llm_multi_turn_enabled else 'single'}")
+        multi_turn = use_multi_turn_override if use_multi_turn_override is not None else self._cfg.llm_multi_turn_enabled
+        logger.info(
+            f"[Analyzer] 开始生成分析报告，多轮对话={multi_turn} "
+            f"({'Plan指定' if use_multi_turn_override is not None else '配置默认'})"
+        )
         report = await self._generate_report(
             analysis_id=analysis_id,
             event=event,
             log_bundle=log_bundle,
             evidence=evidence,
             repo=repo,
+            use_multi_turn_override=use_multi_turn_override,
         )
         if self._graph_loader is not None:
             graph = self._graph_loader()
@@ -271,9 +353,55 @@ class AnalyzerService:
                 related.extend(graph.downstream_of(event.service_name))
                 report = report.model_copy(update={"related_services": related})
                 logger.debug(f"[Analyzer] 关联服务：{len(related)} 个")
+        report = self._sanitize_report(report)
         self._store.save(report)
         logger.info(f"[Analyzer] 分析完成，analysis_id={analysis_id}, summary长度={len(report.summary)}, 假设数={len(report.hypotheses)}, 建议数={len(report.suggestions)}")
         await self._maybe_notify(report)
+        return report
+
+    async def synthesize_from_evidence(
+        self,
+        event: NormalizedErrorEvent,
+        analysis_id: str,
+        pre_collected_evidence: str,
+        *,
+        use_multi_turn: bool | None = None,
+    ) -> AnalysisReport:
+        """仅做 LLM 分析，接收 AI 通过工具自主收集的证据，不做 enrich/zoekt/vector。
+        供 analysis.synthesize 工具使用，证据完全由 AI 驱动（Plan→Act）自主收集。"""
+        if self._llm is None:
+            return AnalysisReport(
+                analysis_id=analysis_id,
+                service_name=event.service_name,
+                created_at=datetime.now(tz=timezone.utc),
+                summary="未配置 LLM，无法生成报告。",
+                hypotheses=[],
+                suggestions=["配置 llm 后可生成分析报告。"],
+                correlation_id=event.correlation_id or analysis_id,
+            )
+        log_bundle = LogBundle(
+            query_key=event.query_key,
+            records=[LogRecord(message=event.error_log[:2000])] if event.error_log else [],
+        )
+        evidence = EvidencePack(level=self._cfg.evidence_level, files=[], notes=[pre_collected_evidence])
+        repo = None
+        candidates = self._router.route(event.service_name)
+        if candidates:
+            repo = candidates[0]
+        if repo is None:
+            repo = CandidateRepo(service_name=event.service_name, local_dir="", git_url="")
+        report = await self._generate_report(
+            analysis_id=analysis_id,
+            event=event,
+            log_bundle=log_bundle,
+            evidence=evidence,
+            repo=repo,
+            use_multi_turn_override=use_multi_turn,
+        )
+        report = self._sanitize_report(report)
+        self._store.save(report)
+        await self._maybe_notify(report)
+        logger.info(f"[Analyzer] synthesize_from_evidence 完成，analysis_id={analysis_id}")
         return report
 
     async def _maybe_notify(self, report: AnalysisReport) -> None:
@@ -345,6 +473,24 @@ class AnalyzerService:
             tokens.append(m.group(0))
         for m in re.finditer(r"\b(com\.[a-zA-Z0-9_.]+)\b", text):
             tokens.append(m.group(1))
+        # Java 类名（含缩写包路径如 n.c.t.b.s.i.ClassName，取最后一段）
+        for m in re.finditer(r"(?:^|[.\s])([A-Z][a-zA-Z0-9]*(?:Service|ServiceImpl|Biz|Controller|Template|Integration)(?:Impl)?)\b", text):
+            tokens.append(m.group(1))
+        # 缩写包路径后的类名：n.c.t.b.http.HttpRestTemplateService
+        for m in re.finditer(r"[a-z]\.[a-z]\.[a-z]\.[a-z][a-z.]*\.([A-Z][a-zA-Z0-9]+)", text):
+            tokens.append(m.group(1))
+        # error_code / error_msg 中的关键标识（含下划线格式如 invalid_order_item_id）
+        for m in re.finditer(r'"error_code"\s*:\s*"([^"]+)"', text):
+            tokens.append(m.group(1))
+        for m in re.finditer(r'"error_msg"\s*:\s*"([^"]+)"', text):
+            # 从 error_msg 提取参数名等（如 "Invalid parameter order_item_id" -> order_item_id）
+            msg = m.group(1)
+            for subm in re.finditer(r"\b([a-z_][a-z0-9_]*)\b", msg):
+                if len(subm.group(1)) >= 3 and subm.group(1) not in ("invalid", "parameter", "missing", "required"):
+                    tokens.append(subm.group(1))
+        # 方法名（getXxx、exchange 等，从日志上下文中提取）
+        for m in re.finditer(r"\b(get[A-Z][a-zA-Z0-9]*|exchange|call[A-Z][a-zA-Z0-9]*)\b", text):
+            tokens.append(m.group(1))
         # 当错误涉及 startTime 等 API 参数时，补充 Request 类名以便 Zoekt 召回类定义
         if re.search(r"startTime|填写正确|pointCharging|point.?charging", text, re.I):
             tokens.extend(["PointChargingRequest", "PointValueAddRequest"])
@@ -399,30 +545,52 @@ class AnalyzerService:
         valid.sort(key=_score)
         return valid
 
+    # 补充检索时排除的泛化词（在代码中过于常见，用 or 连接会导致大量无关命中）
+    _SUPPLEMENTARY_STOP_WORDS = frozenset({
+        "error", "errors", "api", "null", "void", "get", "set", "log", "logs",
+        "impl", "service", "biz", "third", "course", "timeout", "retry",
+        "config", "request", "response", "data", "info", "debug", "warn",
+        "test", "main", "run", "call", "method", "class", "type",
+    })
+
     def _sanitize_supplementary_terms(self, query_terms: list[str]) -> list[str]:
         """
-        清洗 NEED_MORE_EVIDENCE 检索词：LLM 常输出自然语言描述（如「xxx方法实现」），
-        需提取更可能出现在代码中的短标识符（类名、方法名），提高 Zoekt 命中率。
+        清洗 NEED_MORE_EVIDENCE 检索词：优先保留类名、方法名等具体标识符，排除泛化词。
+        泛化词（ERROR、API 等）用 or 连接会导致大量无关命中。
         """
-        out: list[str] = []
+        specific: list[str] = []  # 含 . 的 ClassName.methodName，最精准
+        camel: list[str] = []    # CamelCase 类名
+        other: list[str] = []    # 其他标识符
         seen: set[str] = set()
+
+        def _add(s: str, *, allow_generic: bool = False) -> None:
+            if not s or s in seen:
+                return
+            low = s.lower()
+            if low in self._SUPPLEMENTARY_STOP_WORDS and not allow_generic:
+                return
+            if len(s) < 3:
+                return
+            seen.add(s)
+            if "." in s:
+                specific.append(s)
+            elif re.match(r"^[A-Z][a-zA-Z0-9]*[a-z][A-Za-z0-9]*$", s):  # CamelCase
+                camel.append(s)
+            else:
+                other.append(s)
+
         for t in query_terms:
             if not isinstance(t, str) or not t.strip():
                 continue
             t = t.strip()
-            # 提取类名、方法名等代码标识符（含 . 的如 BeisenTenantBizIntegrationService.pointCharging）
             for m in re.finditer(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?", t):
-                s = m.group(0)
-                if len(s) >= 3 and s not in seen:
-                    seen.add(s)
-                    out.append(s)
-            # 提取纯英文/数字标识符（至少 4 字符，避免过于泛化）
-            for m in re.finditer(r"\b[A-Za-z][A-Za-z0-9_]{3,}\b", t):
-                s = m.group(0)
-                if s not in seen:
-                    seen.add(s)
-                    out.append(s)
-        return out[:8]  # 限制数量，避免查询过长
+                _add(m.group(0))
+            for m in re.finditer(r"\b[A-Za-z_][A-Za-z0-9_]{4,}\b", t):  # 至少 5 字符，减少泛化
+                _add(m.group(0))
+
+        # 优先具体标识符，最多 4 个，避免 or 过多导致结果过泛
+        out = (specific + camel + other)[:4]
+        return out
 
     async def _append_supplementary_evidence(
         self,
@@ -526,6 +694,7 @@ class AnalyzerService:
         log_bundle: LogBundle,
         evidence: EvidencePack,
         repo: CandidateRepo,
+        use_multi_turn_override: bool | None = None,
     ) -> AnalysisReport:
         if self._llm is None:
             return AnalysisReport(
@@ -536,10 +705,12 @@ class AnalyzerService:
                 hypotheses=[],
                 suggestions=["配置 llm.base_url/api_key/model 后可生成原因与修复建议。"],
                 evidence=evidence,
+                correlation_id=event.correlation_id or analysis_id,
             )
 
-        # 根据配置选择单轮或多轮对话
-        if self._cfg.llm_multi_turn_enabled:
+        # Plan 可指定是否多轮；未指定则用配置
+        use_multi = use_multi_turn_override if use_multi_turn_override is not None else self._cfg.llm_multi_turn_enabled
+        if use_multi:
             return await self._generate_report_multi_turn(
                 analysis_id=analysis_id,
                 event=event,
@@ -567,6 +738,7 @@ class AnalyzerService:
         system = prompts.ANALYZER_SYSTEM_PROMPT
         user = self._build_llm_user_prompt(event=event, log_bundle=log_bundle, evidence=evidence)
         raw = await self._llm.generate(system=system, user=user)
+        logger.debug("[Analyzer] 单轮分析 AI 返回:\n%s", raw)
         parsed = parse_json_markdown(raw)
         summary_raw = parsed.get("summary") if isinstance(parsed, dict) else None
         # 处理 summary 可能是字典的情况（如 {"direct_cause": "...", "phenomenon": "..."}）
@@ -587,6 +759,8 @@ class AnalyzerService:
         hypotheses = parsed.get("hypotheses") if isinstance(parsed, dict) else None
         suggestions = parsed.get("suggestions") if isinstance(parsed, dict) else None
         business_impact = _normalize_business_impact(parsed.get("business_impact") if isinstance(parsed, dict) else None)
+        need_more = parsed.get("NEED_MORE_EVIDENCE") or parsed.get("need_more_evidence") if isinstance(parsed, dict) else None
+        need_more_evidence = [str(x).strip() for x in need_more if str(x).strip()][:6] if isinstance(need_more, list) else None
         if not summary:
             summary = "模型未返回summary字段，已保留原始输出。"
         # 确保 summary 是字符串类型（防御性编程）
@@ -606,6 +780,8 @@ class AnalyzerService:
             evidence=evidence,
             raw_model_output=raw,
             business_impact=business_impact,
+            correlation_id=event.correlation_id or analysis_id,
+            need_more_evidence=need_more_evidence,
         )
 
     async def _generate_report_multi_turn(
@@ -652,11 +828,51 @@ class AnalyzerService:
                 evidence=evidence,
             )
 
+    def _extract_error_code_msg(self, error_log: str) -> str:
+        """从 error_log 提取常见错误信息（JSON 字段、异常类型等），供 AI 优先识别。"""
+        if not error_log or not isinstance(error_log, str):
+            return ""
+        parts: list[str] = []
+        seen: set[str] = set()
+
+        def _add(label: str, val: str) -> None:
+            key = f"{label}:{val}"
+            if key not in seen and val.strip():
+                seen.add(key)
+                parts.append(f"【提取】{label}: {val.strip()[:500]}")
+
+        # JSON 格式：error_code / errorCode / code（非数字）
+        for m in re.finditer(r'"(?:error_code|errorCode)"\s*:\s*"([^"]+)"', error_log, re.I):
+            _add("error_code", m.group(1))
+        for m in re.finditer(r'"code"\s*:\s*"([^"]+)"', error_log):
+            v = m.group(1)
+            if not v.isdigit() and len(v) > 1:
+                _add("code", v)
+        # error_msg / errorMsg / message / msg
+        for m in re.finditer(r'"(?:error_msg|errorMsg|message|msg)"\s*:\s*"([^"]+)"', error_log, re.I):
+            _add("message", m.group(1))
+        # detail / reason / description
+        for m in re.finditer(r'"(?:detail|reason|description)"\s*:\s*"([^"]+)"', error_log, re.I):
+            _add("detail", m.group(1))
+        # resp= 或 response= 内嵌 JSON
+        for m in re.finditer(r'(?:resp|response)\s*=\s*\{[^}]*"(?:error_code|error_msg|message|code)"\s*:\s*"([^"]+)"', error_log, re.I):
+            _add("resp", m.group(1))
+        # 异常类型（Java/Python）
+        for m in re.finditer(r'\b([A-Za-z0-9_]+(?:Exception|Error))(?:\s|:|$)', error_log):
+            _add("exception", m.group(1))
+        # Caused by: xxx
+        for m in re.finditer(r'(?:Caused by|cause):\s*([A-Za-z0-9_.]+)\s*:\s*([^\n]+)', error_log, re.I):
+            _add("caused_by", f"{m.group(1)}: {m.group(2)[:200]}")
+        if parts:
+            return "【重要】日志中已识别到的错误信息（请优先分析）：\n" + "\n".join(parts) + "\n\n"
+        return ""
+
     def _build_llm_user_prompt(
         self, *, event: NormalizedErrorEvent, log_bundle: LogBundle, evidence: EvidencePack
     ) -> str:
-        logs_preview = "\n".join(r.message for r in log_bundle.records[:80])
+        logs_preview = self._truncate_logs_for_llm(log_bundle, max_records=80, max_total_chars=15_000)
         evidence_preview = self._format_evidence_for_llm(evidence)
+        extracted_error_info = self._extract_error_code_msg(event.error_log or "")
         schema = {
             "summary": "一句话到三句话，总结定位结论",
             "hypotheses": ["可能原因1", "可能原因2"],
@@ -666,11 +882,38 @@ class AnalyzerService:
         }
         return prompts.ANALYZER_SINGLE_TURN_USER_PROMPT.format(
             service_name=event.service_name,
+            extracted_error_info=extracted_error_info,
             error_log=event.error_log,
             logs_preview=logs_preview,
             evidence_preview=evidence_preview,
             schema_example=json.dumps(schema, ensure_ascii=False)
         )
+
+    def _sanitize_report(self, report: AnalysisReport) -> AnalysisReport:
+        """脱敏：输出前移除 AK/SK、token、连接串等敏感信息。"""
+        return report.model_copy(
+            update={
+                "summary": redact_sensitive(report.summary),
+                "hypotheses": [redact_sensitive(str(h)) for h in (report.hypotheses or [])],
+                "suggestions": [redact_sensitive(str(s)) for s in (report.suggestions or [])],
+                "business_impact": redact_sensitive(report.business_impact) if report.business_impact else None,
+            }
+        )
+
+    def _truncate_logs_for_llm(
+        self, log_bundle: LogBundle, max_records: int = 80, max_total_chars: int = 15_000
+    ) -> str:
+        """大日志截断：限制记录数与总字符数，防止 LLM 上下文爆炸。"""
+        lines: list[str] = []
+        total = 0
+        for r in log_bundle.records[:max_records]:
+            msg = (r.message or "")[:500]
+            if total + len(msg) + 1 > max_total_chars:
+                lines.append(f"...[已截断，共 {len(log_bundle.records)} 条]")
+                break
+            lines.append(msg)
+            total += len(msg) + 1
+        return "\n".join(lines)
 
     def _format_evidence_for_llm(self, evidence: EvidencePack) -> str:
         out: list[str] = []
@@ -712,6 +955,7 @@ class AnalyzerService:
             round1_prompt = self._build_staged_round1_prompt(event=event)
             history.add_user_message(round1_prompt)
             round1_raw = await self._llm.generate_multi_turn(system=system, messages=history.messages)
+            logger.debug("[Analyzer] 分阶段 Round1 快速定位 AI 返回:\n%s", round1_raw)
             history.add_assistant_message(round1_raw)
             round1_result = parse_json_markdown(round1_raw)
 
@@ -724,6 +968,7 @@ class AnalyzerService:
                 )
                 history.add_user_message(round2_prompt)
                 round2_raw = await self._llm.generate_multi_turn(system=system, messages=history.messages)
+                logger.debug("[Analyzer] 分阶段 Round2 深入分析 AI 返回:\n%s", round2_raw)
                 history.add_assistant_message(round2_raw)
                 round2_result = parse_json_markdown(round2_raw)
                 need_terms = self._extract_need_more_evidence(round2_result)
@@ -753,6 +998,7 @@ class AnalyzerService:
             history.add_user_message(round3_prompt)
             try:
                 round3_raw = await self._llm.generate_multi_turn(system=system, messages=history.messages)
+                logger.debug("[Analyzer] 分阶段 Round3 生成建议 AI 返回:\n%s", round3_raw)
                 history.add_assistant_message(round3_raw)
                 round3_result = parse_json_markdown(round3_raw)
             except Exception as e:
@@ -797,6 +1043,7 @@ class AnalyzerService:
             evidence=evidence,
             raw_model_output=raw_output,
             business_impact=business_impact,
+            correlation_id=event.correlation_id or analysis_id,
         )
 
     async def _generate_report_self_refine(
@@ -824,6 +1071,7 @@ class AnalyzerService:
             round1_prompt = self._build_llm_user_prompt(event=event, log_bundle=log_bundle, evidence=evidence)
             history.add_user_message(round1_prompt)
             round1_raw = await self._llm.generate_multi_turn(system=system, messages=history.messages)
+            logger.debug("[Analyzer] Self-Refine Round1 初步分析 AI 返回:\n%s", round1_raw)
             history.add_assistant_message(round1_raw)
             round1_result = parse_json_markdown(round1_raw)
             need_terms = self._extract_need_more_evidence(round1_result)
@@ -854,6 +1102,7 @@ class AnalyzerService:
             review_prompt = self._build_self_refine_review_prompt(last_result)
             history.add_user_message(review_prompt)
             review_raw = await self._llm.generate_multi_turn(system=system, messages=history.messages)
+            logger.debug("[Analyzer] Self-Refine Round%d 审查 AI 返回:\n%s", i + 2, review_raw)
             history.add_assistant_message(review_raw)
             raw_output += f"\n\n--- Round {i+2} (审查) ---\n" + review_raw
 
@@ -863,6 +1112,7 @@ class AnalyzerService:
             )
             history.add_user_message(refine_prompt)
             refine_raw = await self._llm.generate_multi_turn(system=system, messages=history.messages)
+            logger.debug("[Analyzer] Self-Refine Round%d 优化 AI 返回:\n%s", i + 2, refine_raw)
             history.add_assistant_message(refine_raw)
             refine_result = parse_json_markdown(refine_raw)
             raw_output += f"\n\n--- Round {i+2} (优化) ---\n" + refine_raw
@@ -915,6 +1165,7 @@ class AnalyzerService:
             evidence=evidence,
             raw_model_output=raw_output,
             business_impact=business_impact,
+            correlation_id=event.correlation_id or analysis_id,
         )
 
     async def _generate_report_hybrid(
@@ -972,6 +1223,7 @@ class AnalyzerService:
             )
         )
         review_raw = await self._llm.generate_multi_turn(system=system, messages=history.messages)
+        logger.debug("[Analyzer] Hybrid 审查 AI 返回:\n%s", review_raw)
         history.add_assistant_message(review_raw)
 
         # 基于审查结果优化
@@ -981,6 +1233,7 @@ class AnalyzerService:
         )
         history.add_user_message(refine_prompt)
         refine_raw = await self._llm.generate_multi_turn(system=system, messages=history.messages)
+        logger.debug("[Analyzer] Hybrid 优化 AI 返回:\n%s", refine_raw)
         refine_result = parse_json_markdown(refine_raw)
 
         # 合并优化结果
@@ -1029,6 +1282,7 @@ class AnalyzerService:
             evidence=staged_report.evidence,
             raw_model_output=staged_report.raw_model_output + "\n\n--- 审查与优化 ---\n" + review_raw + "\n" + refine_raw,
             business_impact=business_impact,
+            correlation_id=event.correlation_id or analysis_id,
         )
 
     def _build_staged_round1_prompt(self, *, event: NormalizedErrorEvent) -> str:
@@ -1038,7 +1292,9 @@ class AnalyzerService:
             "error_type": "异常类型",
             "quick_summary": "一句话总结问题",
         }
+        extracted = self._extract_error_code_msg(event.error_log or "")
         return prompts.ANALYZER_STAGED_ROUND1_PROMPT.format(
+            extracted_error_info=extracted,
             error_log=event.error_log,
             schema_example=json.dumps(schema, ensure_ascii=False)
         )
@@ -1081,7 +1337,7 @@ class AnalyzerService:
         if round2_result:
             round2_text = f"原因分析：\n{json.dumps(round2_result, ensure_ascii=False)}\n\n"
 
-        logs_preview = "\n".join(r.message for r in log_bundle.records[:40])
+        logs_preview = self._truncate_logs_for_llm(log_bundle, max_records=40, max_total_chars=8_000)
         schema = {
             "suggestions": ["建议1（具体可操作）", "建议2", "建议3"],
             "priority": "高/中/低",
@@ -1117,7 +1373,7 @@ class AnalyzerService:
         review_feedback: str,
     ) -> str:
         """构建 Self-Refine 优化 prompt"""
-        logs_preview = "\n".join(r.message for r in log_bundle.records[:80])
+        logs_preview = self._truncate_logs_for_llm(log_bundle, max_records=80, max_total_chars=15_000)
         evidence_preview = self._format_evidence_for_llm(evidence)
         last_result_text = json.dumps(last_result, ensure_ascii=False) if last_result else "无"
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -9,6 +10,10 @@ import httpx
 from root_seeker.domain import ZoektHit
 
 logger = logging.getLogger(__name__)
+
+# 超时等可重试异常，与 LLM 策略一致
+_ZOEKT_RETRY_MAX_ATTEMPTS = 2
+_ZOEKT_RETRY_DELAY_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -42,56 +47,70 @@ class ZoektClient:
         if repo_ids:
             payload["RepoIDs"] = repo_ids
 
-        try:
-            resp = await self._client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
+        last_err: Exception | None = None
+        for attempt in range(_ZOEKT_RETRY_MAX_ATTEMPTS):
+            try:
+                resp = await self._client.post(url, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
 
-            hits: list[ZoektHit] = []
+                hits: list[ZoektHit] = []
 
-            # 兼容 google/zoekt (FileMatches) 与 sourcegraph/zoekt (Result.Files)
-            file_matches = (
-                data.get("FileMatches")
-                or data.get("file_matches")
-                or data.get("Result", {}).get("Files")
-                or []
-            )
-            logger.debug(f"[ZoektClient] 收到 {len(file_matches)} 个文件匹配")
-            if len(file_matches) == 0:
-                top_keys = list(data.keys()) if isinstance(data, dict) else []
-                result_keys = list(data.get("Result", {}).keys()) if isinstance(data.get("Result"), dict) else []
-                logger.warning(
-                    f"[ZoektClient] Zoekt 返回 0 命中，响应顶层 keys={top_keys}, "
-                    f"Result.keys={result_keys}，请检查：1) 查询词是否在索引中存在 2) repo 名是否匹配"
+                # 兼容 google/zoekt (FileMatches) 与 sourcegraph/zoekt (Result.Files)
+                file_matches = (
+                    data.get("FileMatches")
+                    or data.get("file_matches")
+                    or data.get("Result", {}).get("Files")
+                    or []
                 )
-            for fm in file_matches:
-                file_path = fm.get("FileName") or fm.get("file_name") or ""
-                repo = fm.get("Repository") or fm.get("repository")
-                score = fm.get("Score") or fm.get("score")
-
-                line_number = None
-                preview = None
-                line_matches = fm.get("LineMatches") or fm.get("line_matches") or []
-                if line_matches:
-                    lm0 = line_matches[0]
-                    line_number = lm0.get("LineNumber") or lm0.get("line_number")
-                    preview = lm0.get("Line") or lm0.get("line")
-
-                if file_path:
-                    hits.append(
-                        ZoektHit(
-                            repo=repo,
-                            file_path=file_path,
-                            line_number=line_number,
-                            preview=preview,
-                            score=score,
-                        )
+                logger.debug(f"[ZoektClient] 收到 {len(file_matches)} 个文件匹配")
+                if len(file_matches) == 0:
+                    top_keys = list(data.keys()) if isinstance(data, dict) else []
+                    result_keys = list(data.get("Result", {}).keys()) if isinstance(data.get("Result"), dict) else []
+                    logger.warning(
+                        f"[ZoektClient] Zoekt 返回 0 命中，响应顶层 keys={top_keys}, "
+                        f"Result.keys={result_keys}，请检查：1) 查询词是否在索引中存在 2) repo 名是否匹配"
                     )
-            logger.info(f"[ZoektClient] 搜索完成，返回 {len(hits)} 个命中结果")
-            return hits
-        except Exception as e:
-            logger.error(f"[ZoektClient] 搜索失败：{e}", exc_info=True)
-            raise
+                for fm in file_matches:
+                    file_path = fm.get("FileName") or fm.get("file_name") or ""
+                    repo = fm.get("Repository") or fm.get("repository")
+                    score = fm.get("Score") or fm.get("score")
+
+                    line_number = None
+                    preview = None
+                    line_matches = fm.get("LineMatches") or fm.get("line_matches") or []
+                    if line_matches:
+                        lm0 = line_matches[0]
+                        line_number = lm0.get("LineNumber") or lm0.get("line_number")
+                        preview = lm0.get("Line") or lm0.get("line")
+
+                    if file_path:
+                        hits.append(
+                            ZoektHit(
+                                repo=repo,
+                                file_path=file_path,
+                                line_number=line_number,
+                                preview=preview,
+                                score=score,
+                            )
+                        )
+                logger.info(f"[ZoektClient] 搜索完成，返回 {len(hits)} 个命中结果")
+                return hits
+            except (httpx.ReadTimeout, httpx.ConnectTimeout, asyncio.TimeoutError) as e:
+                last_err = e
+                if attempt < _ZOEKT_RETRY_MAX_ATTEMPTS - 1:
+                    logger.warning(
+                        f"[ZoektClient] 搜索超时/连接失败，{_ZOEKT_RETRY_DELAY_SECONDS}秒后重试 "
+                        f"({attempt + 1}/{_ZOEKT_RETRY_MAX_ATTEMPTS})：{e}"
+                    )
+                    await asyncio.sleep(_ZOEKT_RETRY_DELAY_SECONDS)
+                else:
+                    logger.error(f"[ZoektClient] 搜索失败（已重试{_ZOEKT_RETRY_MAX_ATTEMPTS}次）：{e}", exc_info=True)
+                    raise
+            except Exception as e:
+                logger.error(f"[ZoektClient] 搜索失败：{e}", exc_info=True)
+                raise
+        raise last_err or RuntimeError("Zoekt search failed")
 
     async def list_indexed_repos(self) -> set[str] | None:
         """

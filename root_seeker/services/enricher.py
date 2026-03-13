@@ -42,30 +42,33 @@ class LogEnricher:
 
     async def enrich(self, event: NormalizedErrorEvent) -> LogBundle:
         logger.info(f"[LogEnricher] 开始补全日志，service={event.service_name}, query_key={event.query_key}")
-        
-        # 1. 基础日志补全（原有逻辑）
-        base_bundle = await self._enrich_base(event)
+
+        # 基础日志补全与调用链查询均要求 trace_id；无 trace_id 时直接返回空
+        trace_id, request_id = await self._extract_trace_ids(event)
+        if not trace_id:
+            logger.info("[LogEnricher] ⚠️ 未提取到 trace_id，基础日志补全与调用链查询均跳过，返回空")
+            return LogBundle(
+                query_key=event.query_key or "default_error_context",
+                records=[],
+                raw=None,
+            )
+
+        # 1. 基础日志补全（仅查询包含 trace_id 的日志）
+        base_bundle = await self._enrich_base(event, trace_id)
         logger.info(f"[LogEnricher] 基础日志补全完成，记录数={len(base_bundle.records)}")
 
-        # 2. 如果启用调用链查询，尝试提取 trace_id/request_id 并查询调用链
+        # 2. 如果启用调用链查询，查询调用链
         if self._cfg.trace_chain_enabled and self._trace_chain_provider is not None:
-            logger.info("[LogEnricher] 调用链查询已启用，开始提取 trace_id/request_id")
-            trace_id, request_id = await self._extract_trace_ids(event)
-            
-            # 无论是否提取到，都输出日志
-            if trace_id or request_id:
-                logger.info(f"[LogEnricher] ✅ 提取到 trace_id={trace_id}, request_id={request_id}，开始查询调用链日志")
-                chain_bundle = await self._enrich_chain(event, trace_id, request_id)
-                logger.info(f"[LogEnricher] 调用链日志查询完成，记录数={len(chain_bundle.records)}")
-                
-                if chain_bundle.records:
-                    merged = self._merge_bundles(base_bundle, chain_bundle)
-                    logger.info(f"[LogEnricher] 日志合并完成，总记录数={len(merged.records)}")
-                    return merged
-                else:
-                    logger.info("[LogEnricher] 调用链日志为空，返回基础日志")
+            logger.info(f"[LogEnricher] ✅ 提取到 trace_id={trace_id}, request_id={request_id}，开始查询调用链日志")
+            chain_bundle = await self._enrich_chain(event, trace_id, request_id)
+            logger.info(f"[LogEnricher] 调用链日志查询完成，记录数={len(chain_bundle.records)}")
+
+            if chain_bundle.records:
+                merged = self._merge_bundles(base_bundle, chain_bundle)
+                logger.info(f"[LogEnricher] 日志合并完成，总记录数={len(merged.records)}")
+                return merged
             else:
-                logger.info("[LogEnricher] ⚠️ 未提取到 trace_id/request_id，跳过调用链查询")
+                logger.info("[LogEnricher] 调用链日志为空，返回基础日志")
         elif self._cfg.trace_chain_enabled:
             logger.info("[LogEnricher] 调用链查询已启用但未配置 trace_chain_provider，跳过调用链查询")
         else:
@@ -73,8 +76,8 @@ class LogEnricher:
 
         return base_bundle
 
-    async def _enrich_base(self, event: NormalizedErrorEvent) -> LogBundle:
-        """基础日志补全（原有逻辑）"""
+    async def _enrich_base(self, event: NormalizedErrorEvent, trace_id: str) -> LogBundle:
+        """基础日志补全：仅查询包含 trace_id 的日志。"""
         query_key = event.query_key or "default_error_context"
         template = None
         try:
@@ -86,33 +89,37 @@ class LogEnricher:
                     template = self._registry.get("default_error_context")
                     query_key = "default_error_context"
                 except KeyError:
-                    # 如果连默认值都没有，返回空 LogBundle
-                    return LogBundle(
-                        query_key=query_key,
-                        records=[],
-                        raw=None,
-                    )
+                    return LogBundle(query_key=query_key, records=[], raw=None)
             else:
-                return LogBundle(
-                    query_key=query_key,
-                    records=[],
-                    raw=None,
-                )
+                return LogBundle(query_key=query_key, records=[], raw=None)
 
         start = event.timestamp - timedelta(seconds=self._cfg.time_window_seconds)
         end = event.timestamp + timedelta(seconds=self._cfg.time_window_seconds)
+        from_ts = int(start.timestamp())
+        to_ts = int(end.timestamp())
         params = {
             "service_name": event.service_name,
             "error_log": event.error_log,
-            "start_ts": int(start.timestamp()),
-            "end_ts": int(end.timestamp()),
+            "start_ts": from_ts,
+            "end_ts": to_ts,
+            "trace_id": trace_id,
         }
-        query = template.render(params) if template is not None else ""
+        try:
+            query = template.render(params)
+        except KeyError as e:
+            logger.warning(f"[LogEnricher] 基础日志模板缺少 {{trace_id}} 占位符，跳过查询: {e}")
+            return LogBundle(query_key=query_key, records=[], raw=None)
+        err_preview = (event.error_log or "")[:200]
+        logger.info(
+            f"[LogEnricher] 基础日志补全请求参数: query_key={query_key}, from_ts={from_ts}, to_ts={to_ts}, "
+            f"service_name={event.service_name}, error_log_preview={err_preview!r}..."
+        )
+        logger.debug(f"[LogEnricher] 基础日志补全 SQL: {query[:500]}..." if len(query) > 500 else f"[LogEnricher] 基础日志补全 SQL: {query}")
         return await self._provider.query(
             query_key=query_key,
             query=query,
-            from_ts=int(start.timestamp()),
-            to_ts=int(end.timestamp()),
+            from_ts=from_ts,
+            to_ts=to_ts,
         )
 
     async def _extract_trace_ids(self, event: NormalizedErrorEvent) -> tuple[str | None, str | None]:
@@ -189,7 +196,7 @@ class LogEnricher:
         try:
             logger.debug("[LogEnricher] 调用 LLM 提取 trace_id/request_id")
             raw = await self._llm.generate(system=system, user=user)
-            logger.debug(f"[LogEnricher] LLM 返回原始结果：{raw[:200]}...")
+            logger.debug("[LogEnricher] trace_id 提取 AI 返回:\n%s", raw)
             
             # 尝试解析 JSON
             parsed = parse_json_markdown(raw)
@@ -272,7 +279,10 @@ class LogEnricher:
         time_window = min(self._cfg.trace_chain_time_window_seconds, 300)
         start = event.timestamp - timedelta(seconds=time_window // 2)
         end = event.timestamp + timedelta(seconds=time_window // 2)
-        
+        logger.info(
+            f"[LogEnricher] 调用链补充请求参数: trace_id={trace_id}, request_id={request_id}, "
+            f"from_time={start.isoformat()}, to_time={end.isoformat()}"
+        )
         # 调用 trace_chain_provider 查询
         return await self._trace_chain_provider.query_by_trace_id(
             trace_id=trace_id,

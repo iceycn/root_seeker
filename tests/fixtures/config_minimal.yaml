@@ -1,0 +1,17 @@
+data_dir: data
+audit_dir: data/audit
+api_keys: []
+aliyun_sls:
+  endpoint: "https://cn-hangzhou.log.aliyuncs.com"
+  access_key_id: "test"
+  access_key_secret: "test"
+  project: "test"
+  logstore: "test"
+  topic: null
+sql_templates:
+  - query_key: "default_error_context"
+    query: "trace_id:{trace_id} | select * limit 10"
+  - query_key: "trace_chain"
+    query: "trace_id | select * limit 10"
+repos: []
+trace_chain_enabled: false
