@@ -62,6 +62,14 @@ from root_seeker.services.router import RepoCatalog, ServiceRouter
 from root_seeker.services.vector_retriever import VectorRetriever, VectorSearchConfig
 from root_seeker.services.vector_indexer import VectorIndexer, VectorIndexConfig
 from root_seeker.services.service_graph import ServiceGraphBuilder, load_graph, save_graph
+from root_seeker.ai.gateway import create_ai_gateway_from_app_config
+from root_seeker.mcp.gateway import McpGateway
+from root_seeker.mcp.tools.code import CodeSearchTool, CodeReadTool
+from root_seeker.mcp.tools.index import IndexStatusTool
+from root_seeker.mcp.tools.correlation import CorrelationInfoTool
+from root_seeker.mcp.tools.deps import DepsGraphTool
+from root_seeker.mcp.tools.analysis import AnalysisRunFullTool, AnalysisRunTool, AnalysisSynthesizeTool
+from root_seeker.mcp.tools.evidence import EvidenceContextSearchTool
 from root_seeker.sql_templates import SqlTemplate, SqlTemplateRegistry
 from root_seeker.storage.analysis_store import AnalysisStore
 from root_seeker.storage.audit_log import AuditLogger
@@ -138,10 +146,11 @@ from root_seeker.indexing.queue import (
 
 def create_app() -> FastAPI:
     cfg = load_config().app
-    # 配置日志系统
-    setup_logging(cfg.log_level)
+    # 配置日志系统（环境变量 LOG_LEVEL / ROOT_SEEKER_LOG_LEVEL 可覆盖 config）
+    log_level = os.environ.get("LOG_LEVEL") or os.environ.get("ROOT_SEEKER_LOG_LEVEL") or cfg.log_level
+    setup_logging(log_level)
     app_logger = logging.getLogger(__name__)
-    app_logger.info(f"[App] 应用启动，日志级别={cfg.log_level}")
+    app_logger.info(f"[App] 应用启动，日志级别={log_level}")
     
     app = FastAPI(title="RootSeeker", version="0.1.0")
 
@@ -180,6 +189,8 @@ def create_app() -> FastAPI:
     catalog = RepoCatalog(repos=repos_for_catalog)
     router = ServiceRouter(catalog=catalog)
 
+    mcp_gateway = McpGateway(cfg.mcp)
+
     registry = SqlTemplateRegistry(
         templates=[SqlTemplate(query_key=t.query_key, query=t.query) for t in cfg.sql_templates]
     )
@@ -191,6 +202,7 @@ def create_app() -> FastAPI:
             project=cfg.aliyun_sls.project,
             logstore=cfg.aliyun_sls.logstore,
             topic=cfg.aliyun_sls.topic,
+            timeout_seconds=getattr(cfg.aliyun_sls, "timeout_seconds", 30),
         )
     )
 
@@ -245,6 +257,7 @@ def create_app() -> FastAPI:
                 logstore=cfg.aliyun_sls.logstore,
                 topic=cfg.aliyun_sls.topic,
                 max_time_window_seconds=cfg.max_trace_chain_time_window_seconds,
+                timeout_seconds=getattr(cfg.aliyun_sls, "timeout_seconds", 30),
             )
         )
         app_logger.info(
@@ -264,7 +277,12 @@ def create_app() -> FastAPI:
 
     zoekt = None
     if cfg.zoekt is not None:
-        zoekt = ZoektClient(ZoektClientConfig(api_base_url=str(cfg.zoekt.api_base_url)))
+        zoekt = ZoektClient(
+            ZoektClientConfig(
+                api_base_url=str(cfg.zoekt.api_base_url),
+                timeout_seconds=getattr(cfg.zoekt, "timeout_seconds", 30.0),
+            )
+        )
 
     notifiers: list = []
     if cfg.wecom is not None:
@@ -348,6 +366,13 @@ def create_app() -> FastAPI:
             llm_multi_turn_staged_round3=cfg.llm_multi_turn_staged_round3,
             llm_multi_turn_self_refine_review_rounds=cfg.llm_multi_turn_self_refine_review_rounds,
             llm_multi_turn_self_refine_improvement_threshold=cfg.llm_multi_turn_self_refine_improvement_threshold,
+            ai_driven_enabled=cfg.ai_driven_enabled,
+            max_analysis_rounds=cfg.max_analysis_rounds,
+            max_evidence_collection_depth=cfg.max_evidence_collection_depth,
+            max_evidence_total_chars=cfg.max_evidence_total_chars,
+            hooks_enabled=getattr(cfg.hooks, "enabled", True),
+            hooks_dirs=getattr(cfg.hooks, "dirs", []) or [],
+            analysis_timeout_seconds=cfg.analysis_timeout_seconds,
         ),
         router=router,
         enricher=enricher,
@@ -358,7 +383,22 @@ def create_app() -> FastAPI:
         llm=llm,
         notifiers=[],  # 通知改由完成事件监听器推送（NotifierCompletionListener）
         store=store,
+        mcp_gateway=mcp_gateway,
+        audit=audit_logger,
     )
+
+    if zoekt:
+        mcp_gateway.register_internal_tool(CodeSearchTool(zoekt))
+    mcp_gateway.register_internal_tool(CodeReadTool(router))
+    mcp_gateway.register_internal_tool(IndexStatusTool(qstore, zoekt, router))
+    mcp_gateway.register_internal_tool(CorrelationInfoTool(enricher))
+    mcp_gateway.register_internal_tool(EvidenceContextSearchTool())
+    mcp_gateway.register_internal_tool(
+        DepsGraphTool(graph_loader, analyzer._call_graph_expander, router=router)
+    )
+    mcp_gateway.register_internal_tool(AnalysisRunFullTool(analyzer))
+    mcp_gateway.register_internal_tool(AnalysisSynthesizeTool(analyzer))
+    mcp_gateway.register_internal_tool(AnalysisRunTool(analyzer))  # 向后兼容
 
     event_bus = AnalysisEventBus()
     event_bus.add_listener(LogListener(pretty=True))
@@ -980,14 +1020,15 @@ def create_app() -> FastAPI:
             )
             raise
 
-    index_queue.start_worker(
-        run_qdrant=_run_qdrant,
-        run_zoekt=_run_zoekt,
-        run_remove_qdrant=_run_remove_qdrant if qstore is not None else None,
-        run_remove_zoekt=_run_remove_zoekt,
-        run_resync=_run_resync if (qstore is not None and vector_indexer is not None) else None,
-    )
-    app_logger.info("[App] 索引队列 worker 已启动（memory）")
+    if not os.environ.get("ROOT_SEEKER_TEST"):
+        index_queue.start_worker(
+            run_qdrant=_run_qdrant,
+            run_zoekt=_run_zoekt,
+            run_remove_qdrant=_run_remove_qdrant if qstore is not None else None,
+            run_remove_zoekt=_run_remove_zoekt,
+            run_resync=_run_resync if (qstore is not None and vector_indexer is not None) else None,
+        )
+        app_logger.info("[App] 索引队列 worker 已启动（memory）")
 
     async def _run_full_reload(event: RequestFullReloadEvent) -> None:
         """后台执行全量重载：同步仓库，再为每个仓库发出移除与索引入队事件。"""
@@ -1077,11 +1118,12 @@ def create_app() -> FastAPI:
     )
 
     def _enqueue_ingest_event(event: IngestEvent) -> str:
-        """将 IngestEvent 入队分析，返回 analysis_id。"""
-        norm = to_normalized_event(event)
-        analysis_id = uuid.uuid4().hex
-        job_queue.enqueue(Job(analysis_id=analysis_id, event=norm))
-        return analysis_id
+        """将 IngestEvent 入队分析，返回 analysis_id。correlation_id 贯通 ingest→queue→analyze。"""
+        cid = new_correlation_id()
+        norm = to_normalized_event(event, correlation_id=cid)
+        job_queue.enqueue(Job(analysis_id=cid, event=norm))
+        app_logger.info(f"[Ingest] 任务入队，correlation_id={cid}, service={event.service_name}")
+        return cid
 
     @app.post("/ingest")
     async def ingest_log(
@@ -1587,6 +1629,44 @@ def create_app() -> FastAPI:
                 if m:
                     names.add(m.group(1))
         return names
+
+    @app.get("/mcp/tools")
+    async def list_mcp_tools(_: None = Depends(require_api_key)) -> dict[str, Any]:
+        """返回 MCP 网关中所有可用工具（name, description, inputSchema）。"""
+        tools = await mcp_gateway.list_tools()
+        return {
+            "tools": [
+                {"name": t.name, "description": t.description, "inputSchema": t.inputSchema}
+                for t in tools
+            ],
+        }
+
+    @app.post("/mcp/call")
+    async def call_mcp_tool(
+        request: Request,
+        _: None = Depends(require_api_key),
+    ) -> dict[str, Any]:
+        """
+        执行 MCP 工具。body: {"name": "tool_name", "args": {...}, "context": {...}}。
+        返回 ToolResult 结构：content, isError, errorCode。
+        """
+        try:
+            body = await request.json()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e}") from e
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body 必须为 JSON 对象")
+        name = body.get("name")
+        args = body.get("args") or {}
+        context = body.get("context")
+        if not name:
+            raise HTTPException(status_code=400, detail="缺少 name 参数")
+        result = await mcp_gateway.call_tool(name, args, context)
+        return {
+            "content": [{"type": c.type, "text": c.text} for c in result.content],
+            "isError": result.isError,
+            "errorCode": getattr(result, "errorCode", None),
+        }
 
     @app.get("/index/status")
     async def get_index_status(_: None = Depends(require_api_key)) -> dict[str, Any]:
@@ -2226,6 +2306,9 @@ def create_app() -> FastAPI:
             status["dependencies"] = deps
         return status
 
+    ai_gateway = create_ai_gateway_from_app_config(cfg)
+    app.state.ai_gateway = ai_gateway
+    app.state.mcp_gateway = mcp_gateway
     app.state.event_bus = event_bus
     app.state.repo_sync_event_bus = repoSyncEventBus
     app.state.qdrant_index_event_bus = qdrantIndexEventBus
@@ -2245,6 +2328,7 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def _startup() -> None:
         app_logger.info("[App] 应用启动中...")
+        await mcp_gateway.startup()
         await graph_rebuild_queue.start()
         await job_queue.start()
         await periodic_task_service.start()
@@ -2253,6 +2337,7 @@ def create_app() -> FastAPI:
     @app.on_event("shutdown")
     async def _shutdown() -> None:
         app_logger.info("[App] 应用关闭中...")
+        await mcp_gateway.shutdown()
         if index_queue is not None:
             index_queue.stop_worker()
         await periodic_task_service.stop()
@@ -2274,4 +2359,6 @@ def create_app() -> FastAPI:
     return app
 
 
-app = create_app()
+# 测试模式下不创建模块级 app，由测试 fixture 调用 create_app()
+if not os.environ.get("ROOT_SEEKER_TEST"):
+    app = create_app()

@@ -22,6 +22,7 @@ class AliyunSlsQueryConfig:
     project: str
     logstore: str
     topic: str | None = None
+    timeout_seconds: int = 30
 
 
 class AliyunSlsProvider:
@@ -75,7 +76,10 @@ class AliyunSlsProvider:
                 reverse=True,
             )
 
-        resp = await asyncio.to_thread(_do_query)
+        resp = await asyncio.wait_for(
+            asyncio.to_thread(_do_query),
+            timeout=float(self._cfg.timeout_seconds),
+        )
 
         records: list[LogRecord] = []
         for item in resp.get_logs():
