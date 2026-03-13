@@ -28,8 +28,9 @@ aliyun_sls:
   topic: null
 
 sql_templates:
+  # 基础日志补全：必须包含 trace_id 过滤，仅查询含 trace_id 的日志
   - query_key: "default_error_context"
-    query: "level:ERROR and service:{service_name} | select * from log where __time__ >= {start_ts} and __time__ <= {end_ts} limit 200"
+    query: "trace_id:{trace_id} and level:ERROR and service:{service_name} | select * from log where __time__ >= {start_ts} and __time__ <= {end_ts} limit 200"
   # 调用链日志查询（trace_id/request_id 用 #"value" 短语语法避免阿里云分词）
   - query_key: "trace_chain"
     query: "(trace_id:{trace_id} or request_id:{request_id}) | select * from log where __time__ >= {start_ts} and __time__ <= {end_ts} order by __time__ asc limit 500"
@@ -177,3 +178,8 @@ max_evidence_files: 12
 max_evidence_chunks: 24
 max_context_chars_total: 160000
 max_context_chars_per_file: 24000
+
+# Hook 脚本（可选）
+hooks:
+  enabled: true
+  dirs: []   # 额外目录，如 ["data/hooks"]；空则仅用 ~/.rootseek/hooks

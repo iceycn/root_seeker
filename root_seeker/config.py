@@ -109,6 +109,15 @@ class McpConfig(BaseModel):
     servers: dict[str, McpServerConfig] = Field(default_factory=dict)
 
 
+class HooksConfig(BaseModel):
+    """Hook 脚本配置。"""
+    enabled: bool = Field(default=True, description="是否启用 Hook")
+    dirs: list[str] = Field(
+        default_factory=list,
+        description="额外 hooks 目录（如 ['data/hooks']），空则仅用 ~/.rootseek/hooks",
+    )
+
+
 class AiProviderConfig(BaseModel):
     kind: str = "openai"  # openai, anthropic, deepseek, doubao
     api_key: str = Field(..., description="支持 ENV: 开头引用环境变量")
@@ -171,6 +180,7 @@ class AppConfig(BaseModel):
     git_source: GitSourceConfig | None = None
     mcp: McpConfig = Field(default_factory=McpConfig)
     ai: AiGatewayConfig = Field(default_factory=AiGatewayConfig)
+    hooks: HooksConfig = Field(default_factory=HooksConfig, description="Hook 脚本配置")
 
     evidence_level: str = Field(default="L3", description="L1|L2|L3")
     max_evidence_files: int = 12

@@ -25,6 +25,9 @@ mysql = [
   "PyMySQL>=1.1",
   "cryptography>=42",
 ]
+mcp = [
+  "mcp>=1.0",
+]
 dev = [
   "pytest>=8.0",
   "ruff>=0.5",

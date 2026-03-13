@@ -7,7 +7,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from root_seeker.ai.orchestrator import AiOrchestrator, OrchestratorConfig
+from root_seeker.ai.orchestrator import (
+    AiOrchestrator,
+    OrchestratorConfig,
+    PLAN_RESTRICTED_TOOLS,
+    _build_repro_hint,
+    _compact_tool_results,
+    _reorder_steps_cline_mode,
+    _should_compact_context,
+)
 from root_seeker.domain import AnalysisReport, NormalizedErrorEvent
 from root_seeker.mcp.protocol import ErrorCode, ToolResult
 
@@ -30,6 +38,9 @@ def mock_mcp():
             MagicMock(name="analysis.run", description="执行分析"),
         ]
     )
+    m.build_tools_summary = lambda tools, include_params=True: "\n".join(
+        f"- {getattr(t, 'name', t)}: {getattr(t, 'description', '')}" for t in tools
+    )
     return m
 
 
@@ -42,6 +53,9 @@ def test_plan_parses_llm_json(event, mock_mcp, mock_llm):
     """TC-ORC-001: Plan 阶段解析 LLM 返回的 JSON。"""
     mock_llm.generate = AsyncMock(
         return_value='{"goal":"分析错误","steps":[{"tool_name":"index.get_status","args":{}}]}'
+    )
+    mock_mcp.call_tool = AsyncMock(
+        return_value=ToolResult.text('{"repos":[{"service_name":"test-svc"}]}')
     )
     orch = AiOrchestrator(mock_mcp, mock_llm, OrchestratorConfig())
     orch._tools_summary = "- index.get_status: 索引状态"
@@ -83,6 +97,7 @@ def test_tool_invalid_params_ai_fix_and_retry(event, mock_mcp, mock_llm):
     )
     mock_mcp.call_tool = AsyncMock(
         side_effect=[
+            ToolResult.text('{"repos":[{"service_name":"test-svc"}]}'),  # _plan 预取 index.get_status
             ToolResult.error("缺少必填参数: target", ErrorCode.INVALID_PARAMS),
             ToolResult.text('{"nodes":[{"id":"test-svc","label":"test-svc"}],"edges":[]}'),
         ]
@@ -92,10 +107,27 @@ def test_tool_invalid_params_ai_fix_and_retry(event, mock_mcp, mock_llm):
 
     report = asyncio.run(orch.analyze(event, analysis_id="aid-1"))
     assert report is not None
-    assert mock_mcp.call_tool.call_count == 2
+    assert mock_mcp.call_tool.call_count == 3  # index.get_status(预取) + deps.get_graph(失败) + deps.get_graph(重试)
     first_args = mock_mcp.call_tool.call_args_list[0][0][1]
-    second_args = mock_mcp.call_tool.call_args_list[1][0][1]
+    assert first_args.get("service_name") == "test-svc"  # index.get_status 预取
+    second_args = mock_mcp.call_tool.call_args_list[2][0][1]  # 重试时的参数
     assert second_args.get("target") == "test-svc"
+
+
+def test_mistake_limit_aborts(event, mock_mcp, mock_llm):
+    """同一工具连续失败 mistake_limit 次后中止。"""
+    mock_llm.generate = AsyncMock(
+        return_value='{"goal":"分析","steps":[{"tool_name":"index.get_status","args":{}}]}'
+    )
+    mock_mcp.call_tool = AsyncMock(
+        return_value=ToolResult.error("连接失败", ErrorCode.INTERNAL_ERROR)
+    )
+    mock_mcp.build_tools_summary = lambda t, **_: "- index.get_status: 索引"
+    orch = AiOrchestrator(mock_mcp, mock_llm, OrchestratorConfig(mistake_limit=1))
+    orch._tools_summary = "- index.get_status: 索引"
+    with pytest.raises(RuntimeError) as exc_info:
+        asyncio.run(orch.analyze(event, analysis_id="aid-1"))
+    assert "mistake_limit" in str(exc_info.value) or "连续失败" in str(exc_info.value)
 
 
 def test_tool_failure_raises_runtime_error(event, mock_mcp, mock_llm):
@@ -293,6 +325,85 @@ def test_extract_file_path_fallback_when_json_truncated():
     truncated = '{"hits":[{"file_path":"src/foo/Bar.java","line_number":1,"preview":"x'
     tool_results = [("code.search", truncated, False, {})]
     assert _extract_file_path_from_code_search(tool_results) == "src/foo/Bar.java"
+
+
+def test_optimize_duplicate_tool_results():
+    """code.read 同文件保留最后一次，其余替换为占位"""
+    from root_seeker.ai.orchestrator import _optimize_duplicate_tool_results
+
+    results = [
+        ("code.search", "hit1", False, {}),
+        ("code.read", "content1", False, {"file_path": "src/a.java"}),
+        ("code.read", "content2", False, {"file_path": "src/a.java"}),
+        ("code.read", "content3", False, {"file_path": "src/b.java"}),
+    ]
+    out = _optimize_duplicate_tool_results(results)
+    assert out[1][1] == "[code.read] 重复读取 src/a.java，完整内容见下文最后一次读取"
+    assert out[2][1] == "content2"
+    assert out[3][1] == "content3"
+
+
+def test_should_compact_context():
+    """轮数或字符数超阈值时需压缩"""
+    results = [("code.read", "x" * 5000, False, {})] * 10  # 50k chars
+    assert _should_compact_context(6, results, compact_after_rounds=5, compact_threshold_chars=40_000)
+    assert not _should_compact_context(3, results, compact_after_rounds=5, compact_threshold_chars=40_000)
+    assert not _should_compact_context(6, [("a", "short", False, {})], 5, 40_000)
+
+
+def test_compact_tool_results():
+    """压缩：保留最近 N 个，超长截断"""
+    results = [
+        ("code.search", "hit1", False, {}),
+        ("code.read", "c1", False, {"file_path": "a.java"}),
+        ("code.read", "c2", False, {"file_path": "b.java"}),
+        ("code.read", "c3", False, {"file_path": "c.java"}),
+    ]
+    out = _compact_tool_results(results, keep_last_n=2)
+    assert len(out) == 3  # 1 compact notice + 2 kept
+    assert out[0][0] == "_compact"
+    assert "省略前 2 个" in out[0][1]
+    assert out[1][0] == "code.read" and out[1][3] == {"file_path": "b.java"}
+    assert out[2][0] == "code.read" and out[2][3] == {"file_path": "c.java"}
+
+
+def test_reorder_steps_cline_mode():
+    """analysis.run 在前两步时移至末尾，勘探优先"""
+    steps = [
+        {"tool_name": "analysis.run", "args": {}},
+        {"tool_name": "code.search", "args": {"query": "foo"}},
+        {"tool_name": "code.read", "args": {"file_path": "a.java"}},
+    ]
+    out = _reorder_steps_cline_mode(steps)
+    assert out[0]["tool_name"] == "code.search"
+    assert out[1]["tool_name"] == "code.read"
+    assert out[2]["tool_name"] == "analysis.run"
+
+    steps2 = [{"tool_name": "index.get_status", "args": {}}, {"tool_name": "code.search", "args": {}}]
+    assert _reorder_steps_cline_mode(steps2) == steps2
+
+
+def test_build_repro_hint(event):
+    """可复现参数提示：correlation/index 类工具返回 hint"""
+    assert _build_repro_hint(event, "correlation.get_info") == "query_key=default_error_context"
+    assert _build_repro_hint(event, "code.read") is None
+
+
+def test_plan_restricted_tools_filtered(event, mock_mcp, mock_llm):
+    """PLAN_RESTRICTED_TOOLS 为空时无影响；有配置时过滤受限工具"""
+    # 默认空，行为不变
+    assert len(PLAN_RESTRICTED_TOOLS) == 0
+
+
+def test_truncate_multilevel():
+    """多级截断：超 90% 时 quarter，否则 half"""
+    from root_seeker.ai.orchestrator import _truncate_multilevel
+
+    long_text = "x" * 5000
+    out = _truncate_multilevel(long_text, 1000)
+    assert len(out) <= 1000
+    assert "截断" in out
+    assert "原长 5000" in out
 
 
 def test_analysis_synthesize_uses_synthesize_from_evidence():

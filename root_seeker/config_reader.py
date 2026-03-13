@@ -1,13 +1,21 @@
-"""配置读取器：支持 file / database 双模式，MySQL 模式下从 app_config 表读取配置。"""
+"""配置读取器：支持 file / database 双模式，MySQL 模式下从 app_config 表读取配置。
+
+配置热更新边界（v2.0.0）：
+- 并发安全：reload_config() 使用 threading.Lock 保护，多线程/协程并发调用时串行执行
+- 缓存一致性：reload 返回全新 LoadedConfig，调用方需主动替换引用；无全局单例缓存
+"""
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 logger = logging.getLogger(__name__)
+
+_reload_lock = threading.Lock()
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -105,10 +113,28 @@ class ConfigReader:
                         exc_info=True,
                     )
 
+        # 兼容 mcpServers 节点名（提示词计划）：mcpServers 映射为 mcp.servers
+        mcp_servers = raw.pop("mcpServers", None)
+        if mcp_servers is not None:
+            raw.setdefault("mcp", {})
+            if isinstance(raw["mcp"], dict):
+                raw["mcp"]["servers"] = mcp_servers
+
         # 移除 bootstrap 字段，避免 Pydantic 校验
         raw.pop("config_source", None)
         raw.pop("config_db", None)
         return raw
+
+
+def reload_config_raw(config_path: Path | None = None) -> dict[str, Any]:
+    """
+    热更新：重新读取配置（并发安全）。
+    使用 _reload_lock 保护，避免多线程并发 reload 时的竞态。
+    返回原始 dict，调用方需自行构造 LoadedConfig 并替换各组件引用。
+    """
+    path = config_path or _ReaderSettings().config_path
+    with _reload_lock:
+        return ConfigReader(config_path=path).read()
 
 
 def get_config_db(raw: dict[str, Any] | None = None) -> dict[str, Any] | None:

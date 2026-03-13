@@ -14,6 +14,25 @@ logger = logging.getLogger(__name__)
 DEFAULT_TOOL_TIMEOUT_SECONDS = 120
 
 
+def _build_tool_schema_doc(schema: ToolSchema, include_params: bool = True) -> str:
+    """生成工具文档（名称+描述+参数概要）。"""
+    parts = [f"- {schema.name}: {schema.description}"]
+    if include_params and schema.inputSchema:
+        props = schema.inputSchema.get("properties") or {}
+        required = set(schema.inputSchema.get("required") or [])
+        if props:
+            param_strs = []
+            for k, v in props.items():
+                typ = (v or {}).get("type", "string")
+                req = "必填" if k in required else "可选"
+                desc = (v or {}).get("description", "")
+                brief = f"  {k}({typ},{req})" + (f": {desc[:60]}" if desc else "")
+                param_strs.append(brief)
+            if param_strs:
+                parts.append("  参数: " + "; ".join(param_strs[:5]))
+    return "\n".join(parts)
+
+
 def _validate_args(schema: ToolSchema, args: Dict[str, Any]) -> str | None:
     """校验 args 是否符合 inputSchema，返回错误信息或 None。"""
     if not isinstance(args, dict):
@@ -48,6 +67,39 @@ class McpGateway:
                 result.extend(tools)
             except Exception as e:
                 logger.warning(f"[McpGateway] list_tools from {sid} failed: {e}")
+        return result
+
+    def build_tools_summary(self, tools: List[ToolSchema], include_params: bool = True) -> str:
+        """生成工具摘要（名称+描述+参数概要），供 Plan 提示注入。"""
+        lines = [_build_tool_schema_doc(t, include_params=include_params) for t in tools]
+        return "\n".join(lines)
+
+    async def list_resources(self) -> List[dict]:
+        """汇总所有外部 MCP Server 的 resources/list。"""
+        result: List[dict] = []
+        for sid, sess in self._external_sessions.items():
+            try:
+                resources = await sess.list_resources()
+                for r in resources:
+                    r = dict(r)
+                    r["server_id"] = sid
+                    result.append(r)
+            except Exception as e:
+                logger.debug("[McpGateway] list_resources from %s failed: %s", sid, e)
+        return result
+
+    async def list_prompts(self) -> List[dict]:
+        """汇总所有外部 MCP Server 的 prompts/list。"""
+        result: List[dict] = []
+        for sid, sess in self._external_sessions.items():
+            try:
+                prompts = await sess.list_prompts()
+                for p in prompts:
+                    p = dict(p)
+                    p["server_id"] = sid
+                    result.append(p)
+            except Exception as e:
+                logger.debug("[McpGateway] list_prompts from %s failed: %s", sid, e)
         return result
 
     async def call_tool(self, name: str, args: Dict[str, Any], context: Dict[str, Any] | None = None) -> ToolResult:

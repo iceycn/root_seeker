@@ -75,7 +75,8 @@ class JobQueue:
         logger.debug(f"[JobQueue] Worker {worker_id} 启动")
         while True:
             job = await self._queue.get()
-            logger.info(f"[JobQueue] Worker {worker_id} 开始处理任务，analysis_id={job.analysis_id}")
+            cid = getattr(job.event, "correlation_id", None) or job.analysis_id
+            logger.info(f"[JobQueue] Worker {worker_id} 开始处理任务，analysis_id={job.analysis_id}, correlation_id={cid}")
             st = self._status_store.load(job.analysis_id) or AnalysisStatus(
                 analysis_id=job.analysis_id, status="pending"
             )

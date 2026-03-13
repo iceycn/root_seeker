@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -80,6 +80,11 @@ class AnalyzerConfig:
     max_analysis_rounds: int = 20
     max_evidence_collection_depth: int = 20
     max_evidence_total_chars: int = 80_000
+    # Hook 配置
+    hooks_enabled: bool = True
+    hooks_dirs: list[str] = field(default_factory=list)
+    # 与 job_queue 超时对齐，避免 orchestrator 内部 300s 而 job 160s 导致不一致
+    analysis_timeout_seconds: int = 160
 
 
 class AnalyzerService:
@@ -156,6 +161,13 @@ class AnalyzerService:
             try:
                 from root_seeker.ai.orchestrator import AiOrchestrator, OrchestratorConfig
 
+                hook_hub = None
+                if self._cfg.hooks_enabled:
+                    from root_seeker.hooks.hub import HookHub
+                    hook_hub = HookHub(
+                        enabled=True,
+                        hooks_dirs=self._cfg.hooks_dirs or [],
+                    )
                 orch = AiOrchestrator(
                     mcp_gateway=self._mcp_gateway,
                     llm=self._llm,
@@ -164,8 +176,11 @@ class AnalyzerService:
                         max_analysis_rounds=self._cfg.max_analysis_rounds,
                         max_evidence_collection_depth=self._cfg.max_evidence_collection_depth,
                         max_evidence_total_chars=self._cfg.max_evidence_total_chars,
+                        llm_multi_turn_enabled=self._cfg.llm_multi_turn_enabled,
+                        total_timeout_seconds=float(getattr(self._cfg, "analysis_timeout_seconds", 160)),
                     ),
                     audit=self._audit,
+                    hook_hub=hook_hub,
                 )
                 report = await orch.analyze(event, analysis_id=analysis_id)
                 self._store.save(report)
@@ -352,8 +367,8 @@ class AnalyzerService:
         *,
         use_multi_turn: bool | None = None,
     ) -> AnalysisReport:
-        """仅做 LLM 分析，接收上游工具已收集的证据，不做 enrich/zoekt/vector。
-        供 analysis.synthesize 工具使用，避免与 code.search/code.read 等重复执行。"""
+        """仅做 LLM 分析，接收 AI 通过工具自主收集的证据，不做 enrich/zoekt/vector。
+        供 analysis.synthesize 工具使用，证据完全由 AI 驱动（Plan→Act）自主收集。"""
         if self._llm is None:
             return AnalysisReport(
                 analysis_id=analysis_id,
