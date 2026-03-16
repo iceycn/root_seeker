@@ -148,10 +148,10 @@ def build_plan_system_from_components() -> str:
     return prompts.AI_ORCHESTRATOR_PLAN_SYSTEM
 
 
-# focus chain：任务进度清单
+# focus chain：任务进度清单（参考 Cline 的 focus chain / checklist）
 def build_focus_chain(round_num: int, max_rounds: int, completed_steps: list[str]) -> str:
-    """生成任务进度清单（checklist），供 Plan 参考。"""
-    steps = ["获取上下文", "定位代码", "收集证据", "分析根因"]
+    """生成任务进度清单（checklist），供 Plan 参考。含「追溯上游链路」步骤，当发现数据缺失时引导模型进入该步骤。"""
+    steps = ["获取上下文", "定位代码", "收集证据", "分析根因", "追溯上游链路"]
     done = completed_steps[:]
     lines = [f"轮次: {round_num}/{max_rounds}"]
     for i, s in enumerate(steps):

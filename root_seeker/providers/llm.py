@@ -16,7 +16,22 @@ _LLM_RETRY_DELAY_SECONDS = 2.0
 
 class LLMProvider(Protocol):
     async def generate(self, *, system: str, user: str) -> str: ...
-    
+
+    async def generate_with_tools(
+        self,
+        *,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        """
+        支持原生 tool calling 的对话接口（Cline/Cursor 风格）。
+        messages 可含 role=user|assistant|tool；tools 为 OpenAI function 格式。
+        返回 (content, tool_calls)：若 tool_calls 非空则需执行工具并继续循环；否则 content 为最终输出。
+        若 Provider 未实现，返回 (None, []) 表示不支持。
+        """
+        ...
+
     async def generate_multi_turn(
         self, *, system: str, messages: list[dict[str, str]]
     ) -> str:
@@ -157,6 +172,62 @@ class OpenAICompatLLM:
                 logger.error(f"[LLM] 多轮对话失败：{e}", exc_info=True)
                 raise
         raise last_err or RuntimeError("LLM multi-turn failed")
+
+    async def generate_with_tools(
+        self,
+        *,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        """
+        支持原生 tool calling（Cline/Cursor 风格）。返回 (content, tool_calls)。
+        若 tool_calls 非空，调用方需执行工具、追加 tool 消息后再次调用；否则 content 为最终输出。
+        """
+        logger.debug(
+            "[LLM] tool calling 请求，model=%s, 消息数=%d, 工具数=%d",
+            self._cfg.model,
+            len(messages),
+            len(tools),
+        )
+        url = (
+            self._cfg.chat_url.rstrip("/")
+            if self._cfg.chat_url
+            else f"{self._cfg.base_url.rstrip('/')}/v1/chat/completions"
+        )
+        full_messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
+        full_messages.extend(messages)
+        payload: dict[str, Any] = {
+            "model": self._cfg.model,
+            "messages": full_messages,
+            "tools": tools,
+            "temperature": self._cfg.temperature,
+        }
+        if self._cfg.max_tokens is not None:
+            payload["max_tokens"] = self._cfg.max_tokens
+        headers = {"Authorization": f"Bearer {self._cfg.api_key}"}
+        resp = await self._client.post(url, json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+        choices = data.get("choices") or []
+        if not choices:
+            raise RuntimeError("LLM response has no choices.")
+        msg = choices[0].get("message") or {}
+        content = msg.get("content")
+        if isinstance(content, str) and not content.strip():
+            content = None
+        tool_calls_raw = msg.get("tool_calls") or []
+        tool_calls: list[dict[str, Any]] = []
+        for tc in tool_calls_raw:
+            if isinstance(tc, dict) and tc.get("type") == "function":
+                fn = tc.get("function") or {}
+                tool_calls.append({
+                    "id": tc.get("id", ""),
+                    "name": fn.get("name", ""),
+                    "arguments": fn.get("arguments", "{}"),
+                })
+        logger.debug("[LLM] tool calling 完成，content=%s, tool_calls=%d", bool(content), len(tool_calls))
+        return (content, tool_calls)
 
     async def aclose(self) -> None:
         await self._client.aclose()

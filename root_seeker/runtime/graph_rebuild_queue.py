@@ -63,7 +63,8 @@ class GraphRebuildQueue:
                 builder = ServiceGraphBuilder()
                 graph = builder.build(repos)
                 save_graph(graph, self._graph_path)
-                edge_count = len(graph.to_json())
+                j = graph.to_json()
+                edge_count = len(j.get("edges", []))
                 logger.info(
                     "[GraphRebuildQueue] 服务依赖图重建完成，边数=%d",
                     edge_count,

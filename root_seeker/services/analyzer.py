@@ -77,6 +77,7 @@ class AnalyzerConfig:
     supplementary_evidence_max_retries: int = 1
     # AI 驱动主流程：为 true 时优先使用 AiOrchestrator（Plan->Act->Synthesize），失败回退直连；默认 true 统一走 AI 驱动
     ai_driven_enabled: bool = True
+    orchestration_mode: str = "plan_act"  # plan_act | tool_use_loop（Cline 风格）
     max_analysis_rounds: int = 20
     max_evidence_collection_depth: int = 20
     max_evidence_total_chars: int = 80_000
@@ -172,6 +173,7 @@ class AnalyzerService:
                     mcp_gateway=self._mcp_gateway,
                     llm=self._llm,
                     config=OrchestratorConfig(
+                        orchestration_mode=getattr(self._cfg, "orchestration_mode", "plan_act"),
                         max_tool_calls=8,
                         max_analysis_rounds=self._cfg.max_analysis_rounds,
                         max_evidence_collection_depth=self._cfg.max_evidence_collection_depth,
@@ -285,6 +287,7 @@ class AnalyzerService:
                 max_files=self._evidence_builder._limits.max_files,
                 max_chars_total=self._evidence_builder._limits.max_chars_total,
                 max_chars_per_file=self._evidence_builder._limits.max_chars_per_file,
+                analysis_id=analysis_id,
             )
             logger.info(f"[Analyzer] 调用链展开完成，证据文件数={len(evidence.files)}")
 

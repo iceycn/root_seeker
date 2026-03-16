@@ -1,7 +1,7 @@
 # RootSeeker
 
 <p align="center">
-    <img src="https://img.shields.io/badge/version-2.0.0-blue.svg" alt="Version">
+    <img src="https://img.shields.io/badge/version-3.0.0-blue.svg" alt="Version">
     <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python Version">
     <img src="https://img.shields.io/badge/license-Apache-green.svg" alt="License">
     <img src="https://img.shields.io/badge/docker-ready-blue.svg" alt="Docker">
@@ -11,9 +11,13 @@
   <strong><a href="README.md">中文</a></strong> | <strong><a href="README.en.md">English</a></strong>
 </p>
 
-**RootSeeker** 是一个面向公司内网的 **AI 驱动错误分析与根因发现服务**。v2.0.0 将主流程升级为 **Plan → Act → Synthesize → Check** 多轮迭代，由 AI 自主决策调用哪些工具、收集哪些证据，像人类专家一样逐步逼近根因。
+**RootSeeker** 是一个面向公司内网的 **AI 驱动错误分析与根因发现服务**。它帮你**告别「通灵」式 Debug**：从一条报错日志出发，自动还原故障现场、定位问题代码、生成专家级修复建议，像人类专家一样逐步逼近根因。
 
-通过集成 **MCP 网关**、**SLS (日志)**、**Zoekt (精确代码检索)**、**Qdrant (语义向量检索)** 和 **LLM (大模型推理)**，RootSeeker 能够自动还原故障现场，定位问题代码，并生成专家级的修复建议。
+**核心价值**：将研发人员从繁杂的证据收集中解放出来，借助 AI 快速定位根因、缩短排查时长，减少现网应急带来的损失。AI 自主规划工具调用、收集证据、多轮推理，在 30 秒内产出可落地的根因报告。支持私有化部署，代码与日志不出内网。
+
+**使用它能带来什么**：不再对着堆栈瞎猜；自动关联 TraceID 拉取全链路上下文（API 入参、SQL、RPC）；构建私有代码索引，语义搜索理解业务意图；分析报告实时推送至企微/钉钉，节省排查时间、提升故障响应效率。
+
+v3.0.0 支持 **Plan-Act** 与 **tool_use_loop** 双编排模式，通过 **MCP 网关**、**SLS**、**Zoekt**、**Qdrant** 和 **LLM** 协同，实现自动化的根因发现。
 
 > **如果觉得这个项目对你有帮助，请帮忙点个 Star ⭐️，你的支持是我们更新的动力！**
 
@@ -25,7 +29,8 @@
 
 - [为什么选择 RootSeeker？](#-为什么选择-rootseeker)
 - [核心特性](#-核心特性)
-- [v2.0.0 架构](#-v200-架构)
+- [v3.0.0 架构](#-v300-架构)
+  - [Plan-Act 与 tool_use_loop 区别](#plan-act-与-tool_use_loop-区别)
 - [工作原理](#-工作原理)
 - [快速开始](#-快速开始)
 - [配置说明](#-配置说明)
@@ -50,10 +55,10 @@
 
 ## ✨ 核心特性
 
-- **🤖 AI 驱动主流程**：Plan → Act → Synthesize → Check 多轮迭代，勘探优先，失败自动回退直连路径。
+- **🤖 AI 驱动主流程**：Plan → Act → Synthesize → Check 多轮迭代；可选 tool_use_loop 由模型自主 tool call。
 - **🔌 MCP 网关**：应用内极简网关，工具注册/发现/执行；支持外部 MCP Server（stdio/streamable-http）扩展。
 - **🔍 双引擎代码检索**：结合 Zoekt（正则/符号）和 Qdrant（向量语义），兼顾精确匹配与意图理解。
-- **📦 evidence.context_search**：在已收集证据上下文中检索，避免重复调用 code.search/correlation。
+- **📦 evidence.context_search**：在已收集证据上下文中检索，避免重复调用 code.search/correlation，节省 token。
 - **🔗 全链路日志补全**：自动从阿里云 SLS 等源拉取上下文，还原故障发生时的完整数据流。
 - **📡 多渠道触达**：分析报告实时推送至企业微信、钉钉，支持 Markdown 格式。
 - **🛡️ 数据安全**：支持私有化部署，代码和日志不出内网（可对接本地 LLM）。
@@ -61,24 +66,35 @@
 
 ---
 
-## 🆕 v2.0.0 架构
+## 🆕 v3.0.0 架构
 
-v2.0.0 将主流程从「直接调用内部接口」改为 **AI 驱动**，由 AI 自主决策工具调用顺序与证据收集策略。
+v3.0.0 在 v2.0.0 基础上新增 **tool_use_loop 模式**、**外部依赖识别** 与 **链路追问** 等能力，支持双编排模式与更细粒度的证据收集。
 
 ### MCP 工具
 
-| 工具 | 说明 |
-|------|------|
-| `index.get_status` | 获取仓库与索引概览 |
-| `correlation.get_info` | 获取关联日志、Trace 链 |
-| `code.search` | Zoekt 代码搜索 |
-| `code.read` | 读取文件内容 |
-| `evidence.context_search` | 在已收集证据中检索 |
-| `deps.get_graph` | 依赖拓扑、调用链 |
-| `analysis.synthesize` | 基于证据生成报告 |
-| `analysis.run` / `analysis.run_full` | 全量分析（兜底） |
+| 工具 | 说明 | 价值 |
+|------|------|------|
+| `index.get_status` | 获取仓库与索引概览 | 避免盲目猜测 repo_id，先了解代码结构再规划检索，减少无效调用 |
+| `correlation.get_info` | 获取关联日志、Trace 链 | 还原故障现场完整数据流（API 入参、SQL、RPC），从单条错误扩展到全链路上下文 |
+| `code.search` | Zoekt 正则/关键词代码搜索 | 从堆栈/类名快速定位到具体文件与行号，替代人工逐文件搜索 |
+| `code.read` | 读取文件内容 | 获取完整实现细节，支持行号范围，避免仅靠片段臆断根因 |
+| `evidence.context_search` | 在已收集证据中检索 | 避免重复调用 code.search/correlation，节省 token 与延迟，提升多轮分析效率 |
+| `deps.get_graph` | 依赖拓扑、调用链 | 识别上下游影响面，ClassNotFound/NoSuchMethodError 时定位依赖冲突 |
+| `deps.parse_external` | 解析 pom/gradle/requirements 依赖 | 静态分析声明依赖与版本，识别依赖冲突、版本漂移风险 |
+| `code.resolve_symbol` | 定位符号定义（LSP 不可用时） | 依赖库内符号定位兜底，支持 jdt://、dep_cache 等路径 |
+| `analysis.synthesize` | 基于证据生成报告 | 将多源证据统一推理为根因结论与修复建议 |
+| `analysis.run` / `analysis.run_full` | 全量分析（兜底） | 无勘探需求时一站式执行，保证分析可用性 |
 
-### AI 驱动流程
+### Plan-Act 与 tool_use_loop 区别
+
+| 对比项 | Plan-Act | tool_use_loop |
+|--------|----------|----------------|
+| **流程** | 每轮固定四步：Plan（规划）→ Act（批量执行）→ Synthesize（生成报告）→ Check（自检 + 下一轮决策） | 模型自主决定：每次 LLM 调用可选择是否调用工具、调用哪些工具，直到不再输出 tool_use 时直接输出 JSON 报告 |
+| **控制权** | 应用层控制流程，模型负责「规划」与「综合」 | 模型自主控制，流式 tool call 循环（call → 执行 → 结果回写 → 再次请求 → 循环直到结束） |
+| **适用场景** | 需要结构化、可预测的多轮迭代；对不支持原生 tool calling 的 LLM 友好 | 需要模型更灵活地「边探索边决策」；需 LLM 支持 `generate_with_tools` |
+| **配置** | `orchestration_mode: "plan_act"`（默认） | `orchestration_mode: "tool_use_loop"` |
+
+### AI 驱动流程（Plan-Act 模式）
 
 ```
 Plan（规划）→ Act（执行工具）→ Synthesize（生成报告）→ Check（自检 + 下一轮决策）
@@ -95,7 +111,17 @@ Plan（规划）→ Act（执行工具）→ Synthesize（生成报告）→ Che
 - **AI 网关**：动态切换/新增 LLM 配置（DeepSeek、豆包等），api_key 支持 `ENV:VAR_NAME` 引用。
 - **Hook 体系**：`~/.rootseek/hooks/` + `config.hooks.dirs`，支持 AnalysisStart、AnalysisComplete、PreToolUse、PostToolUse。
 
-详见 [docs/CHANGELOG_v2.0.0.md](docs/CHANGELOG_v2.0.0.md)。
+### v3.0.0 重大更新
+
+| 更新 | 说明 |
+|------|------|
+| **tool_use_loop 模式** | 模型自主决定何时调用工具、何时输出 JSON，`config.orchestration_mode: "tool_use_loop"` 启用 |
+| **外部依赖识别** | `deps.parse_external`、`deps.diff_declared_vs_resolved`、`cmd.run_build_analysis`，支持 Java/Python 依赖解析与漂移检测 |
+| **链路追问** | 发现「集合为空」「数据缺失」等中间结论时，自动输出 NEED_MORE_EVIDENCE 追溯上游，避免过早收尾 |
+| **上下文发现对齐** | 工具错误分级提示、mistake_limit、结构感知截断、相关性保留压缩 |
+| **依赖源码兜底** | `code.resolve_symbol`、`deps.fetch_java_sources`，LSP 不可用时仍可定位依赖库符号 |
+
+详见 [docs/CHANGELOG_v3.0.0.md](docs/CHANGELOG_v3.0.0.md)、[docs/Cline参考_上下文发现与MCP流程.md](docs/Cline参考_上下文发现与MCP流程.md)。
 
 ---
 
@@ -182,6 +208,7 @@ bash scripts/start-all-one-click.sh
 ```yaml
 # config.yaml
 ai_driven_enabled: true   # 默认 true，优先走 AI 驱动
+orchestration_mode: "plan_act"   # plan_act（Plan→Act→Synthesize）| tool_use_loop（需 LLM 支持 generate_with_tools）
 max_analysis_rounds: 20  # 多轮迭代上限
 ```
 
@@ -215,6 +242,7 @@ hooks:
 | [阿里云 SLS 集成](docs/components/03-阿里云SLS.md) | 日志源配置 |
 | [LLM 配置](docs/components/04-LLM配置.md) | DeepSeek/OpenAI/豆包接入 |
 | [通知配置](docs/components/07-通知配置.md) | 企微/钉钉机器人 |
+| [v3.0.0 更新说明](docs/CHANGELOG_v3.0.0.md) | tool_use_loop、外部依赖识别、链路追问 |
 | [v2.0.0 更新说明](docs/CHANGELOG_v2.0.0.md) | MCP 网关、AI 驱动、Hook 体系 |
 | [Hook 体系](docs/Hook体系说明.md) | 分析生命周期自定义脚本 |
 | [文档索引](docs/文档索引.md) | 更多文档 |
@@ -241,7 +269,7 @@ hooks:
 
 > **场景**：线上交易服务突发 `NullPointerException`。
 >
-> **RootSeeker v2.0.0 的表现**：
+> **RootSeeker v3.0.0 的表现**：
 > 1.  **Plan**：AI 规划先调用 index.get_status、correlation.get_info 获取上下文，再 code.search 定位 DiscountCalculator。
 > 2.  **Act**：执行器按计划调用工具，Zoekt 定位到 `DiscountCalculator.java` 第 89 行，Qdrant 发现该类新增了 `@Autowired private VipStrategy vipStrategy;`。
 > 3.  **Synthesize**：LLM 结合日志与代码证据，指出该类由 `new` 手动实例化，导致 Spring 注入失败。

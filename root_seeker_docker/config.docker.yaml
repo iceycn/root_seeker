@@ -4,6 +4,7 @@
 # 默认使用 MySQL 模式，配置可在 Admin「AI应用配置」中管理
 
 config_source: database
+orchestration_mode: "tool_use_loop"   # Cline 风格 tool_use 循环
 
 qdrant:
   url: "http://qdrant:6333"

@@ -4,7 +4,7 @@ import hashlib
 import logging
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 from root_seeker.providers.llm import LLMProvider
 from root_seeker.runtime.circuit_breaker import CircuitBreaker
@@ -127,5 +127,36 @@ class RateLimitedCircuitBreakerLLM:
                             "error": str(e),
                         }
                     )
+                raise
+
+    async def generate_with_tools(
+        self,
+        *,
+        system: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ) -> tuple[str | None, list[dict[str, Any]]]:
+        """支持原生 tool calling（Cline/Cursor 风格），委托给 inner。"""
+        if not hasattr(self._inner, "generate_with_tools"):
+            return (None, [])
+        if not self._breaker.allow():
+            logger.warning("[LLMWrapped] 熔断器已打开，拒绝 tool calling 请求")
+            raise RuntimeError("llm circuit breaker open")
+        t0 = time.time()
+        async with self._sem:
+            try:
+                content, tool_calls = await self._inner.generate_with_tools(
+                    system=system, messages=messages, tools=tools
+                )
+                self._breaker.on_success()
+                logger.info(
+                    "[LLMWrapped] tool calling 成功，耗时=%dms, tool_calls=%d",
+                    int((time.time() - t0) * 1000),
+                    len(tool_calls),
+                )
+                return (content, tool_calls)
+            except Exception as e:
+                self._breaker.on_failure()
+                logger.error("[LLMWrapped] tool calling 失败: %s", e, exc_info=True)
                 raise
 

@@ -17,7 +17,7 @@ from root_seeker.ai.orchestrator import (
     _should_compact_context,
 )
 from root_seeker.domain import AnalysisReport, NormalizedErrorEvent
-from root_seeker.mcp.protocol import ErrorCode, ToolResult
+from root_seeker.mcp.protocol import ErrorCode, ToolResult, ToolSchema
 
 
 @pytest.fixture
@@ -302,7 +302,7 @@ def test_analysis_run_uses_skip_ai_driven():
 
 def test_fill_step_args_injects_file_path_from_code_search(event):
     """code.read 的 file_path 为占位符时，从 code.search 结果注入"""
-    from root_seeker.ai.orchestrator import _extract_file_path_from_code_search, _fill_step_args
+    from root_seeker.ai.orchestrator import _extract_file_path_from_tool_results, _fill_step_args
 
     tool_results = [
         (
@@ -317,14 +317,91 @@ def test_fill_step_args_injects_file_path_from_code_search(event):
     assert args["file_path"] == "src/main/java/OrderService.java"
 
 
+def test_extract_file_path_prefers_source_over_class():
+    """83bee94 场景：hits 中 .class 在 .java 前时，应优先返回 .java 源码路径"""
+    from root_seeker.ai.orchestrator import _extract_file_path_from_tool_results
+
+    # 模拟 Zoekt 返回顺序：.class 在前，.java 在后
+    tool_results = [
+        (
+            "code.search",
+            '{"hits":['
+            '{"file_path":"knowledge-service/target/classes/com/coolcollege/knowledge/service/mq/consumer/CourseWorkflowMessageListener.class"},'
+            '{"file_path":"knowledge-service/target/classes/com/coolcollege/knowledge/service/mq/consumer/OrderedWFBizCallbackConsumerListener.class"},'
+            '{"file_path":"knowledge-service/src/main/java/com/coolcollege/knowledge/service/mq/consumer/CourseWorkflowMessageListener.java","line_number":65}'
+            '],"total":3}',
+            False,
+            {},
+        )
+    ]
+    out = _extract_file_path_from_tool_results(tool_results)
+    assert out == "knowledge-service/src/main/java/com/coolcollege/knowledge/service/mq/consumer/CourseWorkflowMessageListener.java"
+
+
 def test_extract_file_path_fallback_when_json_truncated():
     """JSON 截断非法时，用正则兜底提取 file_path"""
-    from root_seeker.ai.orchestrator import _extract_file_path_from_code_search
+    from root_seeker.ai.orchestrator import _extract_file_path_from_tool_results
 
     # 模拟截断后的非法 JSON（含 control char 或未闭合）
     truncated = '{"hits":[{"file_path":"src/foo/Bar.java","line_number":1,"preview":"x'
     tool_results = [("code.search", truncated, False, {})]
-    assert _extract_file_path_from_code_search(tool_results) == "src/foo/Bar.java"
+    assert _extract_file_path_from_tool_results(tool_results) == "src/foo/Bar.java"
+
+
+def test_fill_step_args_placeholder_no_injection_removes_file_path(event):
+    """占位符但无 code.search/evidence 可注入时，移除 file_path 避免「文件不存在: 占位符」错误"""
+    from root_seeker.ai.orchestrator import _fill_step_args
+
+    step = {"tool_name": "code.read", "args": {"repo_id": "svc", "file_path": "从code.search返回的PdfParser相关文件路径"}}
+    args = _fill_step_args(step, event, "aid-1", tool_results_so_far=[])  # 无 code.search
+    assert "file_path" not in args
+
+
+def test_is_file_path_placeholder_detects_descriptive_text():
+    """描述性占位符（如「从code.search返回的PdfParser相关文件路径」）应被识别"""
+    from root_seeker.ai.orchestrator import _is_file_path_placeholder
+
+    assert _is_file_path_placeholder("从code.search返回的PdfParser相关文件路径") is True
+    assert _is_file_path_placeholder("src/main/java/Foo.java") is False
+
+
+def test_report_from_parsed_extracts_need_more_evidence(event):
+    """_report_from_parsed 应解析 NEED_MORE_EVIDENCE 以支持链路追问"""
+    from root_seeker.ai.orchestrator import AiOrchestrator
+
+    orch = AiOrchestrator(MagicMock(), MagicMock(), OrchestratorConfig())
+    parsed = {
+        "summary": "sendOAMessageUsers 集合为空",
+        "hypotheses": [],
+        "suggestions": [],
+        "NEED_MORE_EVIDENCE": ["sendOAMessageUsers 的赋值来源", "sendOAMessageUsers 调用方"],
+    }
+    report = orch._report_from_parsed(parsed, event, "aid-1")
+    assert report.need_more_evidence == ["sendOAMessageUsers 的赋值来源", "sendOAMessageUsers 调用方"]
+
+
+def test_parse_line_from_evidence_need():
+    """从 evidence_need 解析「类名.java:行号」格式"""
+    from root_seeker.ai.orchestrator import _parse_line_from_evidence_need
+
+    assert _parse_line_from_evidence_need("CourseWorkflowMessageListener.java:266") == (251, 281)
+    assert _parse_line_from_evidence_need("Foo.java:266") == (251, 281)
+    assert _parse_line_from_evidence_need("sendCourseApprovalOAMessage") is None
+    assert _parse_line_from_evidence_need("") is None
+
+
+def test_fill_step_args_injects_start_line_from_evidence_need(event):
+    """evidence_need 含 :行号 时，code.read 注入 start_line/end_line"""
+    from root_seeker.ai.orchestrator import _fill_step_args
+
+    tool_results = [
+        ("code.search", '{"hits":[{"file_path":"src/main/java/CourseWorkflowMessageListener.java"}]}', False, {}),
+    ]
+    step = {"tool_name": "code.read", "args": {"repo_id": "svc", "file_path": "从 code.search 注入"}}
+    args = _fill_step_args(step, event, "aid-1", tool_results_so_far=tool_results, evidence_need="CourseWorkflowMessageListener.java:266")
+    assert args["file_path"] == "src/main/java/CourseWorkflowMessageListener.java"
+    assert args["start_line"] == 251
+    assert args["end_line"] == 281
 
 
 def test_optimize_duplicate_tool_results():
@@ -365,6 +442,92 @@ def test_compact_tool_results():
     assert "省略前 2 个" in out[0][1]
     assert out[1][0] == "code.read" and out[1][3] == {"file_path": "b.java"}
     assert out[2][0] == "code.read" and out[2][3] == {"file_path": "c.java"}
+
+
+def test_tool_use_loop_mode_direct_output(event):
+    """tool_use_loop 模式：模型直接输出 JSON 不调用工具时，解析并返回报告"""
+    mock_mcp = MagicMock()
+    mock_mcp.list_tools = AsyncMock(
+        return_value=[
+            ToolSchema(name="index.get_status", description="索引状态", inputSchema={"type": "object", "properties": {}, "required": []}),
+            ToolSchema(name="code.search", description="代码搜索", inputSchema={"type": "object", "properties": {}, "required": []}),
+        ]
+    )
+    mock_mcp.call_tool = AsyncMock(
+        side_effect=[
+            ToolResult.text('{"repos":[{"service_name":"test-svc"}]}'),  # _discover_context index.get_status
+        ]
+    )
+    mock_llm = MagicMock()
+    mock_llm.generate_with_tools = AsyncMock(
+        return_value=(
+            '{"summary":"NPE 根因定位","hypotheses":["空指针"],"suggestions":["加判空"],"business_impact":"中"}',
+            [],
+        )
+    )
+
+    orch = AiOrchestrator(
+        mock_mcp, mock_llm,
+        OrchestratorConfig(orchestration_mode="tool_use_loop"),
+    )
+    report = asyncio.run(orch.analyze(event, analysis_id="aid-1"))
+    assert report.summary == "NPE 根因定位"
+    assert "空指针" in report.hypotheses
+    assert "加判空" in report.suggestions
+    assert report.business_impact == "中"
+
+
+def test_tool_use_loop_mode_with_tool_calls(event):
+    """tool_use_loop 模式：模型先调用工具再输出 JSON"""
+    mock_mcp = MagicMock()
+    mock_mcp.list_tools = AsyncMock(
+        return_value=[
+            ToolSchema(name="index.get_status", description="索引状态", inputSchema={"type": "object", "properties": {}, "required": []}),
+            ToolSchema(name="code.search", description="代码搜索", inputSchema={"type": "object", "properties": {}, "required": []}),
+        ]
+    )
+    mock_mcp.call_tool = AsyncMock(
+        side_effect=[
+            ToolResult.text('{"repos":[{"service_name":"test-svc"}]}'),  # _discover_context
+            ToolResult.text('{"hits":[{"file_path":"Foo.java"}]}'),  # code.search from model
+        ]
+    )
+    mock_llm = MagicMock()
+    mock_llm.generate_with_tools = AsyncMock(
+        side_effect=[
+            (None, [{"id": "call_1", "name": "code.search", "arguments": '{"query":"NPE","repo_id":"test-svc"}'}]),
+            ('{"summary":"定位到 Foo.java","hypotheses":["空指针"],"suggestions":["判空"],"business_impact":"中"}', []),
+        ]
+    )
+
+    orch = AiOrchestrator(
+        mock_mcp, mock_llm,
+        OrchestratorConfig(orchestration_mode="tool_use_loop"),
+    )
+    report = asyncio.run(orch.analyze(event, analysis_id="aid-1"))
+    assert report.summary == "定位到 Foo.java"
+    assert mock_mcp.call_tool.call_count >= 2  # index + code.search
+
+
+def test_mcp_tool_schema_to_openai_function():
+    """MCP ToolSchema 转为 OpenAI function 格式"""
+    from root_seeker.ai.orchestrator import _mcp_tool_schema_to_openai_function
+
+    schema = ToolSchema(
+        name="code.search",
+        description="搜索代码",
+        inputSchema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}, "repo_id": {"type": "string"}},
+            "required": ["query"],
+        },
+    )
+    out = _mcp_tool_schema_to_openai_function(schema)
+    assert out["type"] == "function"
+    assert out["function"]["name"] == "code.search"
+    assert out["function"]["description"] == "搜索代码"
+    assert out["function"]["parameters"]["properties"]["query"]["type"] == "string"
+    assert "query" in out["function"]["parameters"]["required"]
 
 
 def test_reorder_steps_cline_mode():

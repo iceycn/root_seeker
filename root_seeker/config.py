@@ -199,6 +199,7 @@ class AppConfig(BaseModel):
     llm_multi_turn_self_refine_review_rounds: int = Field(default=1, description="Self-Refine 模式：审查轮数")
     llm_multi_turn_self_refine_improvement_threshold: float = Field(default=0.1, description="Self-Refine 模式：改进阈值（如果改进幅度小于此值，提前终止）")
     ai_driven_enabled: bool = Field(default=True, description="为 true 时优先使用 AI 驱动主流程（Plan->Act->Synthesize），失败回退直连；默认 true 统一走 AI 驱动")
+    orchestration_mode: str = Field(default="plan_act", description="编排模式：plan_act（Plan→Act→Synthesize→Check）| tool_use_loop（Cline 风格，模型自主 tool call）")
     max_analysis_rounds: int = Field(default=20, description="AI 驱动多轮迭代最大轮数，默认 20")
     max_evidence_collection_depth: int = Field(default=20, description="NEED_MORE_EVIDENCE 证据收集递归最大深度，默认 20")
     max_evidence_total_chars: int = Field(default=80_000, description="送入 LLM 的证据总字符上限，避免 400 超长请求；默认 80000")
@@ -207,6 +208,7 @@ class AppConfig(BaseModel):
     trace_chain_enabled: bool = Field(default=True, description="是否启用调用链日志查询（使用 LLM 提取 trace_id/request_id）")
     trace_chain_time_window_seconds: int = Field(default=300, description="调用链查询时间窗口（秒），默认5分钟（300秒）")
     max_trace_chain_time_window_seconds: int = Field(default=300, description="调用链查询最大时间窗口（秒），默认5分钟（300秒），超过此值会自动调整")
+    log_timezone_offset_hours: int = Field(default=8, description="日志时间为本地时区时相对 UTC 的偏移（如北京 +8 填 8）；0 表示已为 UTC")
 
     # 定时任务配置
     periodic_tasks_enabled: bool = Field(default=False, description="是否启用定时任务功能（总开关），默认 false")
@@ -218,6 +220,15 @@ class AppConfig(BaseModel):
     auto_sync_concurrency: int = Field(default=8, description="仓库同步并发数，默认8")
     auto_index_concurrency: int = Field(default=1, description="向量索引并发数，默认1（按仓库排队加载，避免一次性加载过多）")
     indexing_queue: str = Field(default="memory", description="索引队列策略：memory（默认内存队列），后续可扩展 redis 等")
+
+    # v3.0.0 依赖缓存目录白名单（工作区隔离，只读访问）
+    dep_cache_roots: list[str] = Field(
+        default_factory=lambda: [
+            str(Path.home() / ".m2" / "repository"),
+            str(Path.home() / ".gradle" / "caches" / "modules" / "files"),
+        ],
+        description="依赖缓存目录白名单，用于 code.read dep_cache、jdt:// 映射。空则使用默认 ~/.m2、~/.gradle",
+    )
 
 
 @dataclass(frozen=True)

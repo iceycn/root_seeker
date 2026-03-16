@@ -28,6 +28,9 @@ mysql = [
 mcp = [
   "mcp>=1.0",
 ]
+lsp = [
+  "python-lsp-server>=1.7",
+]
 dev = [
   "pytest>=8.0",
   "ruff>=0.5",

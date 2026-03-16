@@ -2,6 +2,8 @@
 
 参考 [cline-dev/cline](https://github.com/cline-dev/cline) 3.72.0 的架构，用于优化 RootSeeker 的上下文发现、AI 驱动与 MCP 使用流程。
 
+> **源码核对**：工具错误与参数修正相关描述已基于本地 cline-3.72.0 源码核对（`responses.ts`、`WriteToFileToolHandler.ts`、`ToolExecutor.ts`、`task/index.ts`）。
+
 ## 1. Cline 核心设计
 
 ### 1.1 上下文发现（loadContext）
@@ -137,8 +139,10 @@ Cline 在系统提示中注入 MCP 相关文档，帮助模型理解如何创建
 
 | 设计点 | Cline 实现 | root_seek 差距 | 借鉴价值 |
 |--------|------------|----------------|----------|
-| **渐进式错误** | `writeToFileMissingContentError()`：按连续失败次数（1/2/3+）给出不同提示 | 无 | 同一工具连续失败时，提示更具体（如「第 3 次失败，建议检查参数」） |
-| **统一错误格式** | `formatResponse.toolError()` 结构化错误文案 | `ToolResult.error()` 简单文本 | 错误格式统一，便于 AI 理解 |
+| **渐进式错误** | `writeToFileMissingContentError()`：按连续失败次数（1/2/3+）给出不同提示 | ~~无~~ ✅ 已实现 | `_call_tool_with_retry` 的 failure_count 分级 + 第 3+ 次策略建议 |
+| **统一错误格式** | `formatResponse.toolError()` 结构化错误文案 | ~~简单文本~~ ✅ 已实现 | `format_tool_error` 含 `<error>` 标签，按 error_code 差异化 |
+| **按错误类型差异化** | missingToolParameterError、writeToFileMissingContentError、permissionDeniedError 等 | ~~无~~ ✅ 已实现 | format_tool_timeout_error、format_dependency_unavailable_error、format_tool_not_found_error |
+| **不可修正直接跳过** | TOOL_NOT_FOUND、DEPENDENCY_UNAVAILABLE 建议 abort | ~~无~~ ✅ 已实现 | UNRECOVERABLE_ERROR_CODES，跳过错误判断 AI |
 | **Plan 模式限制** | `PLAN_MODE_RESTRICTED_TOOLS` 限制 write_to_file 等 | 无 Plan 模式 | 若引入 plan-only 阶段可限制写操作 |
 
 ### 5.3 MCP 高级（McpHub）— 高优先级
@@ -180,6 +184,22 @@ Cline 在系统提示中注入 MCP 相关文档，帮助模型理解如何创建
 | **mistake limit** | `mistake_limit_reached`、`tooManyMistakes()` | 无 | 连续工具失败 N 次时停止并提示 |
 | **checkpoint** | git 分支式 checkpoint | 无 | 若需可回滚可引入 |
 | **focus chain** | 任务进度清单（checklist） | 无 | 若需任务拆解可借鉴 |
+
+### 5.8 tool_use_loop 模式与 Cline 差异（v3.0.0 新增）
+
+RootSeeker 的 `orchestration_mode="tool_use_loop"` 参考 Cline 的 tool_use 循环，但存在以下实现差异：
+
+| 设计点 | Cline 3.72.0 | RootSeeker tool_use_loop |
+|--------|--------------|---------------------------|
+| **结束信号** | 模型必须调用 `attempt_completion` 工具显式表示完成 | 模型「无 tool_calls + content 为 JSON」即结束，无显式完成工具 |
+| **无 tool 时** | 推送 `noToolsUsed` 消息，强制模型重试（用 attempt_completion / ask_followup_question / 继续任务） | 直接认为 content 是最终报告，解析 JSON 并结束 |
+| **流式** | 流式 API，边解析边执行 tool_use | 非流式，`generate_with_tools` 一次性请求 |
+| **并行 tool call** | 支持同一轮多个 tool_use 并行执行 | 支持（同一轮多个 tool_calls 顺序执行后一次性追加） |
+| **mistake 计数** | `consecutiveMistakeCount`：无 tool 时 +1，达上限 ask 用户 | 无 noToolsUsed，故无此计数；`max_tool_calls` 限制迭代次数 |
+| **递归结构** | `recursivelyMakeClineRequests(userContent)` 递归，userContent 含 tool_result 或 noToolsUsed | `_tool_use_loop_iterate(messages)` 递归，messages 含 assistant+tool 消息 |
+| **工具集** | 含 attempt_completion、ask_followup_question 等 Cline 内置工具 | 排除 analysis.synthesize/run/run_full，仅保留勘探类工具 |
+
+**设计取舍**：RootSeeker 面向「错误分析 → 输出 JSON 报告」的单一任务，无需通用 IDE 的 attempt_completion；模型通过「不再调用工具 + 输出 JSON」即可结束，流程更简单。若需更贴近 Cline，可考虑新增 `submit_report` 工具作为显式完成信号。
 
 ---
 
