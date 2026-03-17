@@ -17,7 +17,7 @@ v3.0.0 在 v2.0.0 基础上新增两大重点：
 | 统一错误格式 | formatResponse.toolError() 含 `<error>` 标签 | format_tool_error() 含 `<error>` 标签 |
 | mistake_limit | 达上限 ask 用户 feedback，tooManyMistakes 后继续 | 达上限中止分析，回退直连 |
 
-详见 [Cline参考_上下文发现与MCP流程.md](Cline参考_上下文发现与MCP流程.md)、[提示词计划_v3.0.0.md](提示词计划_v3.0.0.md)。
+详见 [提示词计划_v3.0.0.md](提示词计划_v3.0.0.md)。
 
 ---
 
