@@ -1,0 +1,7 @@
+# 使用预构建镜像启动 root-seeker（无需本地源码构建）
+# 用法: docker compose -f docker-compose.yml -f docker-compose.pull.yml up -d
+# 或: bash start.sh --pull
+# 镜像来源: ghcr.io/iceycn/root-seeker 或 Docker Hub
+services:
+  root-seeker:
+    image: ghcr.io/iceycn/root-seeker:latest

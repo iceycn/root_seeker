@@ -11,14 +11,18 @@
 ## 一键启动（开箱即用）
 
 ```bash
-# 在项目根目录执行
+# 在项目根目录执行（本地构建）
 bash root_seeker_docker/start.sh
+
+# 使用预构建镜像（root-seeker 从 ghcr.io 拉取，无需本地构建）
+bash root_seeker_docker/start.sh --pull
 ```
 
 Windows PowerShell：
 
 ```powershell
 .\root_seeker_docker\start.ps1
+.\root_seeker_docker\start.ps1 -Pull   # 使用预构建镜像
 ```
 
 **脚本自动完成**：
