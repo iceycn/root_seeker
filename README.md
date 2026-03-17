@@ -25,8 +25,31 @@ v3.0.0 支持 **Plan-Act** 与 **tool_use_loop** 双编排模式，通过 **MCP 
 
 ---
 
+## 📸 项目图例
+
+**异常测试界面**：配置数据来源、输入错误日志、选择查询模板，提交分析。
+
+<p align="center">
+  <img src="docs/images/异常测试界面.png" alt="异常测试界面" width="800"/>
+</p>
+
+**分析结果示例**：AI 分析摘要、根因假设与修复建议。
+
+<p align="center">
+  <img src="docs/images/分析结果示例.png" alt="分析结果示例" width="800"/>
+</p>
+
+**企微/钉钉通知**：分析报告实时推送至群聊，含摘要、可能原因与修改建议。
+
+<p align="center">
+  <img src="docs/images/企微钉钉通知示例.png" alt="企微钉钉通知示例" width="800"/>
+</p>
+
+---
+
 ## 📚 目录
 
+- [项目图例](#-项目图例)
 - [为什么选择 RootSeeker？](#-为什么选择-rootseeker)
 - [核心特性](#-核心特性)
 - [v3.0.0 架构](#-v300-架构)
