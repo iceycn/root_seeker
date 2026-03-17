@@ -28,6 +28,8 @@ Windows PowerShell：
 
 ## 手动启动
 
+默认使用 `Dockerfile.lsp`（v3.0.0 完整能力：LSP、Maven、Gradle）。
+
 ```bash
 cd root_seeker_docker
 docker compose up -d --build

@@ -1,17 +1,27 @@
-# RootSeeker Docker 镜像（含 JDT LS + Python LSP，版本固定）
-# 基于 Dockerfile 扩展，内置 Headless LSP 依赖
+# RootSeeker Docker 镜像（v3.0.0：含 JDT LS + Python LSP + Maven + Gradle）
+# 支持 LSP、cmd.run_build_analysis、deps.fetch_java_sources 等 v3.0 能力
 # 构建：docker build -f root_seeker_docker/Dockerfile.lsp -t root-seeker:lsp .
 FROM golang:1.22-alpine AS zoekt-builder
 RUN export GOPROXY=https://goproxy.cn,direct GOTOOLCHAIN=auto; go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest
 
 FROM python:3.11-slim
 
+LABEL version="3.0.0"
+LABEL description="RootSeeker v3.0.0 - AI-powered error analysis with LSP, Maven, Gradle"
+
 WORKDIR /app
 
-# 安装 Git、curl、OpenJDK（JDT LS 需要）
+# 安装 Git、curl、OpenJDK、Maven、unzip（JDT LS、cmd.run_build_analysis 需要）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git openssh-client curl openjdk-17-jdk \
+    git openssh-client curl openjdk-17-jdk maven unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Gradle（cmd.run_build_analysis、deps 解析需要）
+ARG GRADLE_VERSION=8.5
+RUN curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o /tmp/gradle.zip \
+    && unzip -q /tmp/gradle.zip -d /opt \
+    && ln -sf /opt/gradle-${GRADLE_VERSION}/bin/gradle /usr/local/bin/gradle \
+    && rm /tmp/gradle.zip
 
 # JDT LS：版本固定（修改下方版本与 URL 即切换）
 ARG JDTLS_VERSION=1.38.0

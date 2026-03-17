@@ -48,7 +48,7 @@ services:
   root-seeker:
     build:
       context: ..
-      dockerfile: root_seeker_docker/Dockerfile
+      dockerfile: root_seeker_docker/Dockerfile.lsp
     ports:
       - "8000:8000"
     volumes:
