@@ -1,5 +1,8 @@
 # RootSeeker Docker 一键启动（开箱即用）
 # 用法: 在项目根目录执行  .\root_seeker_docker\start.ps1
+#       .\root_seeker_docker\start.ps1 -Pull   # 使用预构建镜像
+
+param([switch]$Pull)
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -12,10 +15,17 @@ New-Item -ItemType Directory -Force -Path (Join-Path $ProjectRoot "data\repos_fr
 New-Item -ItemType Directory -Force -Path (Join-Path $ProjectRoot "data\audit") | Out-Null
 
 # 2. 启动
-Write-Host ""
-Write-Host "=== 启动 Docker 服务（MySQL 首次启动将自动初始化表）==="
 Set-Location $ScriptDir
-docker compose up -d --build
+if ($Pull) {
+    Write-Host ""
+    Write-Host "=== 启动 Docker 服务（使用预构建镜像 ghcr.io/iceycn/root-seeker:latest）==="
+    docker compose build zoekt root-seeker-admin
+    docker compose -f docker-compose.yml -f docker-compose.pull.yml up -d --no-build
+} else {
+    Write-Host ""
+    Write-Host "=== 启动 Docker 服务（本地构建，MySQL 首次启动将自动初始化表）==="
+    docker compose up -d --build
+}
 
 Write-Host ""
 Write-Host "=== 服务已启动 ==="

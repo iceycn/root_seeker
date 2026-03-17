@@ -95,3 +95,7 @@ class AnalysisReport(BaseModel):
         default=None,
         description="证据不足时 LLM 输出的补充检索关键词，供 Orchestrator 触发下一轮",
     )
+    diagnosis_summary: dict | None = Field(
+        default=None,
+        description="v3.0.0 可观测：degraded_modes、truncations、key_evidence_refs",
+    )

@@ -88,6 +88,7 @@ llm_multi_turn_enable_self_review: true   # 是否启用自我审查（仅 hybri
 
 # AI 驱动主流程（v2.0.0）：为 true 时优先使用 AiOrchestrator（Plan->Act->Synthesize），失败自动回退直连
 # ai_driven_enabled: true   # 默认 true，统一走 AI 驱动（Plan->Act->Synthesize）；需 MCP 网关与 LLM 均已配置；失败时回退直连
+orchestration_mode: "tool_use_loop"   # tool_use_loop（Cline 风格）| plan_act（Plan→Act→Synthesize，需 LLM 支持 generate_with_tools）
 # max_analysis_rounds: 20    # AI 驱动多轮迭代最大轮数，每轮结束由 AI 决策是否继续
 # max_evidence_collection_depth: 20   # NEED_MORE_EVIDENCE 证据收集递归最大深度
 # max_evidence_total_chars: 80000     # 送入 LLM 的证据总字符上限，避免 400 超长请求
@@ -114,6 +115,7 @@ llm_multi_turn_enable_self_review: true   # 是否启用自我审查（仅 hybri
 # trace_chain_enabled: true   # 是否启用调用链日志查询（默认启用）
 # trace_chain_time_window_seconds: 300   # 调用链查询时间窗口（秒），默认5分钟（300秒）
 # max_trace_chain_time_window_seconds: 300   # 调用链查询最大时间窗口（秒），默认5分钟（300秒），超过此值会自动调整
+# log_timezone_offset_hours: 8   # 日志时间为本地时区时相对 UTC 的偏移（如北京 +8 填 8）；0 表示已为 UTC
 
 # 定时任务配置（定期同步仓库并更新向量索引）
 # periodic_tasks_enabled: false   # 是否启用定时任务功能（总开关），默认 false

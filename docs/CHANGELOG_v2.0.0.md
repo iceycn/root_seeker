@@ -102,7 +102,6 @@ mcp:
 | [v2.0.0_详细Review与修复.md](v2.0.0_详细Review与修复.md) | 实现 Review、evidence_ctx 修复、Check/Act 增强 |
 | [v2.0.0_实施检查清单.md](v2.0.0_实施检查清单.md) | 实施检查清单 |
 | [Hook体系说明.md](Hook体系说明.md) | Hook 使用说明 |
-| [Cline参考_上下文发现与MCP流程.md](Cline参考_上下文发现与MCP流程.md) | 上下文发现与 MCP 参考 |
 
 ---
 
