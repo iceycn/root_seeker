@@ -4,7 +4,8 @@
 FROM golang:1.22-alpine AS zoekt-builder
 RUN export GOPROXY=https://goproxy.cn,direct GOTOOLCHAIN=auto; go install github.com/sourcegraph/zoekt/cmd/zoekt-index@latest
 
-FROM python:3.11-slim
+# 使用 bookworm 确保 openjdk-17-jdk 在 main 仓库可用（bullseye 需 backports）
+FROM python:3.11-slim-bookworm
 
 LABEL version="3.0.0"
 LABEL description="RootSeeker v3.0.0 - AI-powered error analysis with LSP, Maven, Gradle"
