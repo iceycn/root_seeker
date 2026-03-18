@@ -1,7 +1,7 @@
 # RootSeeker
 
 <p align="center">
-    <img src="https://img.shields.io/badge/version-2.0.0-blue.svg" alt="Version">
+    <img src="https://img.shields.io/badge/version-3.0.0-blue.svg" alt="Version">
     <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python Version">
     <img src="https://img.shields.io/badge/license-Apache-green.svg" alt="License">
     <img src="https://img.shields.io/badge/docker-ready-blue.svg" alt="Docker">
@@ -11,9 +11,13 @@
   <strong><a href="README.md">中文</a></strong> | <strong><a href="README.en.md">English</a></strong>
 </p>
 
-**RootSeeker** is an **AI-driven error analysis and root cause discovery service** for internal company networks. v2.0.0 upgrades the main flow to **Plan → Act → Synthesize → Check** multi-round iteration, where the AI autonomously decides which tools to call and which evidence to collect, approaching the root cause step by step like a human expert.
+**RootSeeker** is an **AI-driven error analysis and root cause discovery service** for internal company networks. It helps you **say goodbye to "psychic" debugging**: starting from a single error log, it automatically reconstructs the failure scene, locates problematic code, and generates expert-level repair suggestions, approaching the root cause step by step like a human expert.
 
-By integrating **MCP Gateway**, **SLS (Logs)**, **Zoekt (Exact Code Search)**, **Qdrant (Semantic Vector Search)**, and **LLM (Large Model Reasoning)**, RootSeeker automatically reconstructs the failure scene, locates problematic code, and generates expert-level repair suggestions.
+**Core value**: Free developers from tedious evidence collection; use AI to quickly locate root causes, shorten troubleshooting time, and reduce losses from production incidents. AI autonomously plans tool calls, collects evidence, and performs multi-turn reasoning to produce actionable root cause reports within 30 seconds. Supports private deployment—code and logs never leave your intranet.
+
+**What you get**: No more guessing at error stacks; automatic TraceID correlation to pull full-link context (API inputs, SQL, RPC); build private code indexes for semantic search that understands business intent; analysis reports pushed in real-time to WeCom/DingTalk, saving troubleshooting time and improving incident response.
+
+v3.0.0 supports dual orchestration modes—**Plan-Act** and **tool_use_loop**—coordinating **MCP Gateway**, **SLS**, **Zoekt**, **Qdrant**, and **LLM** for automated root cause discovery.
 
 > **If this project helps you, please give it a Star ⭐️, your support is our motivation!**
 
@@ -21,11 +25,35 @@ By integrating **MCP Gateway**, **SLS (Logs)**, **Zoekt (Exact Code Search)**, *
 
 ---
 
+## 📸 Project Screenshots
+
+**Exception Test UI**: Configure data sources, input error logs, select query template, and submit for analysis.
+
+<p align="center">
+  <img src="docs/images/异常测试界面.png" alt="Exception Test UI" width="800"/>
+</p>
+
+**Analysis Result Example**: AI analysis summary, root cause hypotheses, and repair suggestions.
+
+<p align="center">
+  <img src="docs/images/分析结果示例.png" alt="Analysis Result Example" width="800"/>
+</p>
+
+**WeCom/DingTalk Notification**: Analysis reports pushed in real-time to group chats, including summary, possible causes, and modification suggestions.
+
+<p align="center">
+  <img src="docs/images/企微钉钉通知示例.png" alt="WeCom/DingTalk Notification" width="800"/>
+</p>
+
+---
+
 ## 📚 Table of Contents
 
+- [Project Screenshots](#-project-screenshots)
 - [Why Choose RootSeeker?](#-why-choose-rootseeker)
 - [Key Features](#-key-features)
-- [v2.0.0 Architecture](#-v200-architecture)
+- [v3.0.0 Architecture](#-v300-architecture)
+  - [Plan-Act vs tool_use_loop](#plan-act-vs-tool_use_loop)
 - [How It Works](#-how-it-works)
 - [Quick Start](#-quick-start)
 - [Configuration](#-configuration)
@@ -50,10 +78,10 @@ Traditional troubleshooting often relies on manual experience, requiring SREs to
 
 ## ✨ Key Features
 
-- **🤖 AI-Driven Main Flow**: Plan → Act → Synthesize → Check multi-round iteration; exploration-first; automatic fallback to direct path on failure.
+- **🤖 AI-Driven Main Flow**: Plan → Act → Synthesize → Check multi-round iteration; optional tool_use_loop for model-autonomous tool calls.
 - **🔌 MCP Gateway**: In-app minimal gateway for tool registration/discovery/execution; supports external MCP Server (stdio/streamable-http).
 - **🔍 Dual-Engine Code Retrieval**: Combines Zoekt (Regex/Symbol) and Qdrant (Vector Semantic), balancing exact matching and intent understanding.
-- **📦 evidence.context_search**: Search within collected evidence context, avoiding redundant code.search/correlation calls.
+- **📦 evidence.context_search**: Search within collected evidence context, avoiding redundant code.search/correlation calls, saving tokens.
 - **🔗 Full-Link Log Completion**: Automatically pulls context from sources like Aliyun SLS, restoring the complete data flow at the time of failure.
 - **📡 Multi-Channel Notification**: Analysis reports are pushed in real-time to WeCom and DingTalk, supporting Markdown format.
 - **🛡️ Data Security**: Supports private deployment; code and logs do not leave the intranet (compatible with local LLMs).
@@ -61,24 +89,35 @@ Traditional troubleshooting often relies on manual experience, requiring SREs to
 
 ---
 
-## 🆕 v2.0.0 Architecture
+## 🆕 v3.0.0 Architecture
 
-v2.0.0 changes the main flow from "direct internal API calls" to **AI-driven**, where the AI autonomously decides tool call order and evidence collection strategy.
+v3.0.0 adds **tool_use_loop mode**, **external dependency recognition**, and **link tracing** on top of v2.0.0, supporting dual orchestration modes and finer-grained evidence collection.
 
 ### MCP Tools
 
-| Tool | Description |
-|------|-------------|
-| `index.get_status` | Get repository and index overview |
-| `correlation.get_info` | Get correlated logs, trace chain |
-| `code.search` | Zoekt code search |
-| `code.read` | Read file contents |
-| `evidence.context_search` | Search within collected evidence |
-| `deps.get_graph` | Dependency topology, call chain |
-| `analysis.synthesize` | Generate report from evidence |
-| `analysis.run` / `analysis.run_full` | Full analysis (fallback) |
+| Tool | Description | Value |
+|------|-------------|-------|
+| `index.get_status` | Get repository and index overview | Avoid blind repo_id guessing; understand code structure before planning retrieval |
+| `correlation.get_info` | Get correlated logs, trace chain | Restore full data flow (API inputs, SQL, RPC) from single error to full-link context |
+| `code.search` | Zoekt regex/keyword code search | Locate specific files and line numbers from stack/class names |
+| `code.read` | Read file contents | Get full implementation details; supports line range; avoid inferring root cause from fragments |
+| `evidence.context_search` | Search within collected evidence | Avoid redundant code.search/correlation calls; save tokens and latency |
+| `deps.get_graph` | Dependency topology, call chain | Identify upstream/downstream impact; locate dependency conflicts for ClassNotFound/NoSuchMethodError |
+| `deps.parse_external` | Parse pom/gradle/requirements | Static analysis of declared deps; identify conflicts and version drift |
+| `code.resolve_symbol` | Resolve symbol definitions (when LSP unavailable) | Fallback for symbol lookup in dependency libs; supports jdt://, dep_cache paths |
+| `analysis.synthesize` | Generate report from evidence | Unify multi-source evidence into root cause conclusion and repair suggestions |
+| `analysis.run` / `analysis.run_full` | Full analysis (fallback) | One-stop execution when no exploration needed; ensures analysis availability |
 
-### AI-Driven Flow
+### Plan-Act vs tool_use_loop
+
+| Aspect | Plan-Act | tool_use_loop |
+|--------|----------|----------------|
+| **Flow** | Fixed four steps per round: Plan → Act → Synthesize → Check | Model decides: each LLM call may or may not invoke tools; outputs JSON report when no more tool_use |
+| **Control** | App controls flow; model handles "plan" and "synthesize" | Model controls; streaming tool call loop until done |
+| **Use case** | Structured, predictable multi-round iteration; LLM-friendly without native tool calling | More flexible "explore while deciding"; requires LLM with `generate_with_tools` |
+| **Config** | `orchestration_mode: "plan_act"` (default) | `orchestration_mode: "tool_use_loop"` |
+
+### AI-Driven Flow (Plan-Act Mode)
 
 ```
 Plan (plan) → Act (execute tools) → Synthesize (generate report) → Check (self-check + next-round decision)
@@ -95,7 +134,17 @@ Plan (plan) → Act (execute tools) → Synthesize (generate report) → Check (
 - **AI Gateway**: Dynamic switch/add LLM configs (DeepSeek, Doubao, etc.); api_key supports `ENV:VAR_NAME` reference.
 - **Hook System**: `~/.rootseek/hooks/` + `config.hooks.dirs`; supports AnalysisStart, AnalysisComplete, PreToolUse, PostToolUse.
 
-See [docs/CHANGELOG_v2.0.0.md](docs/CHANGELOG_v2.0.0.md) for details.
+### v3.0.0 Major Updates
+
+| Update | Description |
+|--------|-------------|
+| **tool_use_loop mode** | Model decides when to call tools and when to output JSON; enable with `config.orchestration_mode: "tool_use_loop"` |
+| **External dependency recognition** | `deps.parse_external`, `deps.diff_declared_vs_resolved`, `cmd.run_build_analysis`; Java/Python dep parsing and drift detection |
+| **Link tracing** | When "empty collection" or "missing data" is found, auto-output NEED_MORE_EVIDENCE to trace upstream, avoiding premature closure |
+| **Context discovery alignment** | Tool error tier hints, mistake_limit, structure-aware truncation, relevance-preserving compression |
+| **Dependency source fallback** | `code.resolve_symbol`, `deps.fetch_java_sources`; symbol lookup in dependency libs when LSP unavailable |
+
+See [docs/CHANGELOG_v3.0.0.md](docs/CHANGELOG_v3.0.0.md) for details.
 
 ---
 
@@ -182,6 +231,7 @@ bash scripts/start-all-one-click.sh
 ```yaml
 # config.yaml
 ai_driven_enabled: true   # Default true, prefer AI-driven flow
+orchestration_mode: "plan_act"   # plan_act (Plan→Act→Synthesize) | tool_use_loop (requires LLM with generate_with_tools)
 max_analysis_rounds: 20  # Multi-round iteration limit
 ```
 
@@ -215,6 +265,7 @@ Place scripts in `~/.rootseek/hooks/` or `config.hooks.dirs`. See [Hook体系说
 | [Aliyun SLS Integration](docs/components/en/03-aliyun-sls.md) | Log Source Configuration |
 | [LLM Configuration](docs/components/en/04-llm.md) | DeepSeek/OpenAI/Doubao Access |
 | [Notification Configuration](docs/components/en/07-notifiers.md) | WeCom/DingTalk Bots |
+| [v3.0.0 Changelog](docs/CHANGELOG_v3.0.0.md) | tool_use_loop, external deps, link tracing |
 | [v2.0.0 Changelog](docs/CHANGELOG_v2.0.0.md) | MCP Gateway, AI-Driven, Hook System |
 | [Hook System](docs/Hook体系说明.md) | Custom script injection into analysis lifecycle |
 | [Document Index](docs/文档索引.md) | More docs |
@@ -241,7 +292,7 @@ See Swagger UI at `http://localhost:8000/docs` for more endpoints.
 
 > **Scenario**: Sudden `NullPointerException` in online transaction service.
 >
-> **RootSeeker v2.0.0 Performance**:
+> **RootSeeker v3.0.0 Performance**:
 > 1.  **Plan**: AI plans to call index.get_status, correlation.get_info for context, then code.search to locate DiscountCalculator.
 > 2.  **Act**: Executor calls tools per plan; Zoekt locates line 89 of `DiscountCalculator.java`; Qdrant finds the class recently added `@Autowired private VipStrategy vipStrategy;`.
 > 3.  **Synthesize**: LLM combines logs and code evidence, concluding the class was instantiated via `new`, causing Spring injection failure.
