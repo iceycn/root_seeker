@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any  # noqa: F401 - used in type hints
 
 
 @dataclass
@@ -132,10 +132,38 @@ def extract_error_codes(text: str, max_items: int = 5) -> list[str]:
     return result[:max_items]
 
 
-def discover_refs_from_error_log(error_log: str, max_preview_chars: int = 2000) -> dict[str, list[str]]:
-    """从 error_log 发现可检索的引用，供 Plan 和工具调用参考。"""
-    preview = (error_log or "")[:max_preview_chars]
-    refs: dict[str, list[str]] = {}
+# 关键行模式：优先采样包含这些模式的日志行，避免截断漏检 trace_id/堆栈
+_KEY_LINE_PATTERNS = (
+    "trace_id", "traceId", "trace_id:", "traceId:",
+    "stacktrace", "Stack trace", "Exception", "Error",
+    "at com.", "at org.", "at java.", "at sun.",
+    "File \"", "in <module>", "Caused by:",
+)
+
+def _prioritize_key_lines(text: str, max_chars: int) -> tuple[str, bool, int]:
+    """抽样窗口 + 关键行优先：先收集含关键信号的行，再补其余，避免截断漏检。"""
+    if not text or len(text) <= max_chars:
+        return text or "", False, len(text or "")
+    lines = text.splitlines()
+    key_lines: list[str] = []
+    rest_lines: list[str] = []
+    for line in lines:
+        lower = line.lower()
+        if any(p.lower() in lower for p in _KEY_LINE_PATTERNS):
+            key_lines.append(line)
+        else:
+            rest_lines.append(line)
+    combined = "\n".join(key_lines + rest_lines)
+    truncated = len(combined) > max_chars
+    preview = combined[:max_chars]
+    return preview, truncated, len(text)
+
+
+def discover_refs_from_error_log(error_log: str, max_preview_chars: int = 4000) -> dict[str, list[str] | Any]:
+    """从 error_log 发现可检索的引用。采用关键行优先采样，避免截断漏检 trace_id/堆栈。"""
+    full = error_log or ""
+    preview, was_truncated, original_len = _prioritize_key_lines(full, max_preview_chars)
+    refs: dict[str, list[str] | Any] = {}
 
     trace_id = extract_trace_id(preview)
     if trace_id:
@@ -157,10 +185,41 @@ def discover_refs_from_error_log(error_log: str, max_preview_chars: int = 2000) 
     if codes:
         refs["error_code"] = codes
 
+    if was_truncated:
+        refs["_discovery_meta"] = {
+            "truncated": True,
+            "original_length": original_len,
+            "preview_length": len(preview),
+            "hint": "日志已截断采样，trace_id/堆栈等可能在后文，Plan 可考虑 correlation.get_info 补全",
+        }
     return refs
 
 
-def build_hints_for_plan(refs: dict[str, list[str]]) -> str:
+def extract_relevance_keywords(error_log: str, max_keywords: int = 25) -> set[str]:
+    """
+    从 error_log 提取相关性关键词，供证据压缩时优先保留与错误签名、trace_id、目标符号直接相关的证据。
+    返回可用于匹配证据内容的关键词集合。
+    """
+    if not error_log or not isinstance(error_log, str):
+        return set()
+    refs = discover_refs_from_error_log(error_log, max_preview_chars=6000)
+    keywords: set[str] = set()
+    for key in ("trace_id", "request_id"):
+        vals = refs.get(key)
+        if isinstance(vals, list):
+            keywords.update(str(v).strip() for v in vals if v and len(str(v).strip()) >= 4)
+    for key in ("class_method", "config_key", "error_code"):
+        vals = refs.get(key)
+        if isinstance(vals, list):
+            keywords.update(str(v).strip() for v in vals[:8] if v and len(str(v).strip()) >= 2)
+    # 错误类型：Exception 名、ClassNotFound 等
+    for m in re.finditer(r"\b([A-Za-z][A-Za-z0-9_]*(?:Exception|Error|NotFound|Timeout))\b", error_log):
+        keywords.add(m.group(1))
+    filtered = [k for k in keywords if k and len(k) >= 2]
+    return set(filtered[:max_keywords])
+
+
+def build_hints_for_plan(refs: dict[str, list[str] | Any]) -> str:
     """根据发现的引用生成 Plan 提示。"""
     lines: list[str] = []
     if refs.get("trace_id"):
@@ -174,6 +233,9 @@ def build_hints_for_plan(refs: dict[str, list[str]]) -> str:
     if refs.get("error_code"):
         ec = refs["error_code"][:3]
         lines.append(f"- 已发现 error_code: {', '.join(ec)}，分析时需结合业务逻辑")
+    meta = refs.get("_discovery_meta")
+    if isinstance(meta, dict) and meta.get("truncated"):
+        lines.append(f"- 【截断提示】日志已采样（原长 {meta.get('original_length', 0)} 字），未发现 trace_id 时建议 correlation.get_info 补全")
     if not lines:
         return "（未从日志中提取到结构化引用，建议先 index.get_status 了解仓库结构）"
     return "\n".join(lines)

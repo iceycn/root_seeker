@@ -4,9 +4,9 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
-from root_seeker.domain import LogBundle, NormalizedErrorEvent
+from root_seeker.domain import LogBundle, LogRecord, NormalizedErrorEvent
 from root_seeker.providers.llm import LLMProvider
 from root_seeker.providers.sls import CloudLogProvider
 from root_seeker.providers.trace_chain import TraceChainProvider
@@ -16,12 +16,46 @@ from root_seeker.utils import parse_json_markdown
 
 logger = logging.getLogger(__name__)
 
+# 常见日志时间格式：2026-03-11 16:40:15.185 或 2026-03-11 16:40:15
+_LOG_TIMESTAMP_PATTERN = re.compile(
+    r"(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?)"
+)
+
+
+def _parse_log_timestamp_from_error_log(
+    error_log: str, timezone_offset_hours: int = 0
+) -> datetime | None:
+    """
+    从 error_log 首行解析日志时间，用于基础日志补全与调用链查询的时间窗口。
+    支持格式：YYYY-MM-DD HH:MM:SS 或 YYYY-MM-DD HH:MM:SS.mmm
+    timezone_offset_hours: 日志为本地时区时相对 UTC 的偏移，如北京 +8 填 8；0 表示已为 UTC。
+    """
+    if not error_log or not isinstance(error_log, str):
+        return None
+    match = _LOG_TIMESTAMP_PATTERN.search(error_log.strip())
+    if not match:
+        return None
+    try:
+        s = match.group(1).strip()
+        # 支持 .mmm 毫秒
+        if " " in s and "." in s.split()[-1]:
+            dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S.%f")
+        else:
+            dt = datetime.strptime(s[:19], "%Y-%m-%d %H:%M:%S")
+        # 本地时间转 UTC：减去偏移
+        if timezone_offset_hours:
+            dt = dt - timedelta(hours=timezone_offset_hours)
+        return dt.replace(tzinfo=timezone.utc)
+    except (ValueError, IndexError):
+        return None
+
 
 @dataclass(frozen=True)
 class EnrichmentConfig:
     time_window_seconds: int = 300
     trace_chain_enabled: bool = True  # 是否启用调用链日志查询
     trace_chain_time_window_seconds: int = 300  # 调用链查询时间窗口（最大5分钟，300秒）
+    log_timezone_offset_hours: int = 8  # 日志时间为本地时区时，相对 UTC 的偏移（如北京 +8，填 8）；0 表示已为 UTC
 
 
 class LogEnricher:
@@ -93,8 +127,12 @@ class LogEnricher:
             else:
                 return LogBundle(query_key=query_key, records=[], raw=None)
 
-        start = event.timestamp - timedelta(seconds=self._cfg.time_window_seconds)
-        end = event.timestamp + timedelta(seconds=self._cfg.time_window_seconds)
+        # 优先使用 error_log 中的日志时间，避免 event.timestamp 为摄入时间导致查询错误时间窗口
+        effective_ts = _parse_log_timestamp_from_error_log(
+            event.error_log, self._cfg.log_timezone_offset_hours
+        ) or event.timestamp
+        start = effective_ts - timedelta(seconds=self._cfg.time_window_seconds)
+        end = effective_ts + timedelta(seconds=self._cfg.time_window_seconds)
         from_ts = int(start.timestamp())
         to_ts = int(end.timestamp())
         params = {
@@ -115,11 +153,33 @@ class LogEnricher:
             f"service_name={event.service_name}, error_log_preview={err_preview!r}..."
         )
         logger.debug(f"[LogEnricher] 基础日志补全 SQL: {query[:500]}..." if len(query) > 500 else f"[LogEnricher] 基础日志补全 SQL: {query}")
-        return await self._provider.query(
+        bundle = await self._provider.query(
             query_key=query_key,
             query=query,
             from_ts=from_ts,
             to_ts=to_ts,
+        )
+        # 后过滤：仅保留包含 trace_id 的日志（SLS trace_id: 语法若未命中索引会返回无关日志）
+        def _record_contains_trace(rec: LogRecord) -> bool:
+            if trace_id in (rec.message or ""):
+                return True
+            # fields 可能为 content/message 等，trace_id 可能在嵌套值中
+            for v in (rec.fields or {}).values():
+                if isinstance(v, str) and trace_id in v:
+                    return True
+                if isinstance(v, dict) and any(trace_id in str(x) for x in v.values()):
+                    return True
+            return trace_id in str(rec.fields or {})
+
+        filtered = [r for r in bundle.records if _record_contains_trace(r)]
+        if len(filtered) != len(bundle.records):
+            logger.info(
+                f"[LogEnricher] 基础日志按 trace_id 后过滤：原始={len(bundle.records)}, 过滤后={len(filtered)}"
+            )
+        return LogBundle(
+            query_key=query_key,
+            records=filtered,
+            raw=bundle.raw,
         )
 
     async def _extract_trace_ids(self, event: NormalizedErrorEvent) -> tuple[str | None, str | None]:
@@ -273,12 +333,16 @@ class LogEnricher:
         if not self._trace_chain_provider:
             logger.debug("[LogEnricher] trace_chain_provider 未配置，返回空列表")
             return LogBundle(query_key="trace_chain", records=[], raw=None)
-        
+
+        # 优先使用 error_log 中的日志时间，与基础日志补全一致
+        effective_ts = _parse_log_timestamp_from_error_log(
+            event.error_log, self._cfg.log_timezone_offset_hours
+        ) or event.timestamp
         # 计算时间范围（以事件时间为中心，前后扩展）
         # 限制最大时间窗口为5分钟（300秒）
         time_window = min(self._cfg.trace_chain_time_window_seconds, 300)
-        start = event.timestamp - timedelta(seconds=time_window // 2)
-        end = event.timestamp + timedelta(seconds=time_window // 2)
+        start = effective_ts - timedelta(seconds=time_window // 2)
+        end = effective_ts + timedelta(seconds=time_window // 2)
         logger.info(
             f"[LogEnricher] 调用链补充请求参数: trace_id={trace_id}, request_id={request_id}, "
             f"from_time={start.isoformat()}, to_time={end.isoformat()}"

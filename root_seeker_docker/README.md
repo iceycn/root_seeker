@@ -11,14 +11,18 @@
 ## 一键启动（开箱即用）
 
 ```bash
-# 在项目根目录执行
+# 在项目根目录执行（本地构建）
 bash root_seeker_docker/start.sh
+
+# 使用预构建镜像（root-seeker 从 ghcr.io 拉取，无需本地构建）
+bash root_seeker_docker/start.sh --pull
 ```
 
 Windows PowerShell：
 
 ```powershell
 .\root_seeker_docker\start.ps1
+.\root_seeker_docker\start.ps1 -Pull   # 使用预构建镜像
 ```
 
 **脚本自动完成**：
@@ -27,6 +31,8 @@ Windows PowerShell：
 - **MySQL 首次启动** → 自动执行 `mysql-init/sql/` 下全部 SQL，初始化若依表、Git 仓库表、**完整 Demo 配置**（app_config：LLM、Embedding、Qdrant、Zoekt、阿里云 SLS 等）、预置 Demo 仓库（psf/requests），并设置 `root.seeker.baseUrl` 为 `http://root-seeker:8000`
 
 ## 手动启动
+
+默认使用 `Dockerfile.lsp`（v3.0.0 完整能力：LSP、Maven、Gradle）。
 
 ```bash
 cd root_seeker_docker

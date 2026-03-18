@@ -70,8 +70,11 @@ class CallGraphExpander:
         self._tree_sitter_chunker = tree_sitter_chunker
         # 方法定位缓存：method_key -> list[EvidenceFile]
         self._method_cache: dict[str, list[EvidenceFile]] = {}
+        self._current_analysis_id: str = ""
         # 文件解析缓存：file_path -> (methods_definitions, method_calls)
         self._file_parse_cache: dict[str, tuple[list[MethodReference], list[MethodReference]]] = {}
+        # v3.0.0：本轮展开的降级模式，供 evidence.notes 可见
+        self._expand_degradations: set[str] = set()
 
     async def expand_evidence(
         self,
@@ -81,6 +84,7 @@ class CallGraphExpander:
         max_files: int,
         max_chars_total: int,
         max_chars_per_file: int,
+        analysis_id: str | None = None,
     ) -> EvidencePack:
         """
         从证据包中的代码片段解析方法调用关系，定位并读取调用方/被调用方方法代码，迭代扩展证据。
@@ -99,6 +103,8 @@ class CallGraphExpander:
             logger.debug("[CallGraphExpander] 调用链展开未启用")
             return evidence
 
+        self._expand_degradations = set()
+        self._current_analysis_id = analysis_id or ""
         base = Path(repo_local_dir)
         if not base.exists() or not base.is_dir():
             logger.warning(f"[CallGraphExpander] 仓库目录不存在：{repo_local_dir}")
@@ -125,6 +131,7 @@ class CallGraphExpander:
         for round_num in range(self._cfg.max_rounds):
             if total_methods_added >= self._cfg.max_total_methods:
                 logger.info(f"[CallGraphExpander] 已达到最大方法数限制（{self._cfg.max_total_methods}），停止展开")
+                self._expand_degradations.add("scan_truncated")
                 break
             if len(evidence.files) >= max_files:
                 break
@@ -204,6 +211,11 @@ class CallGraphExpander:
         else:
             logger.debug("[CallGraphExpander] 调用链展开未找到新方法")
 
+        if self._expand_degradations:
+            deg = sorted(self._expand_degradations)
+            evidence.notes.append(f"[degraded_modes] {', '.join(deg)}")
+            evidence.notes.append(f"[risk_flags] {deg}")
+
         return evidence
 
     async def _extract_method_calls(
@@ -221,6 +233,8 @@ class CallGraphExpander:
         # 优先使用 Tree-sitter 解析（更精确）
         if self._cfg.use_tree_sitter and self._tree_sitter_chunker and file_path:
             calls = await self._extract_calls_with_tree_sitter(code, file_path, repo_local_dir)
+            if not calls:
+                self._expand_degradations.add("treesitter_fallback")
 
         # 如果 Tree-sitter 未启用或未找到，回退到正则
         if not calls:
@@ -247,6 +261,8 @@ class CallGraphExpander:
         # 优先使用 Tree-sitter 解析
         if self._cfg.use_tree_sitter and self._tree_sitter_chunker and file_path:
             methods = await self._extract_definitions_with_tree_sitter(code, file_path, repo_local_dir)
+            if not methods:
+                self._expand_degradations.add("treesitter_fallback")
 
         # 如果 Tree-sitter 未启用或未找到，回退到正则
         if not methods:
@@ -296,8 +312,13 @@ class CallGraphExpander:
                 for child in reversed(node.children):
                     stack.append(child)
 
-        except Exception:
-            pass
+        except Exception as e:
+            aid = getattr(self, "_current_analysis_id", "") or ""
+            logger.warning(
+                "[CallGraphExpander] 解析方法调用降级 analysis_id=%s tool=extract_calls exception=%s file=%s",
+                aid, type(e).__name__, file_path,
+            )
+            self._expand_degradations.add("extract_calls_failed")
 
         return calls
 
@@ -339,8 +360,13 @@ class CallGraphExpander:
                 for child in reversed(node.children):
                     stack.append(child)
 
-        except Exception:
-            pass
+        except Exception as e:
+            aid = getattr(self, "_current_analysis_id", "") or ""
+            logger.warning(
+                "[CallGraphExpander] 解析方法定义降级 analysis_id=%s tool=extract_definitions exception=%s file=%s",
+                aid, type(e).__name__, file_path,
+            )
+            self._expand_degradations.add("extract_definitions_failed")
 
         return methods
 
@@ -391,8 +417,12 @@ class CallGraphExpander:
                     return None
                 return MethodReference(class_name=class_name, method_name=method_name, file_path=file_path)
 
-        except Exception:
-            pass
+        except Exception as e:
+            aid = getattr(self, "_current_analysis_id", "") or ""
+            logger.debug(
+                "[CallGraphExpander] 解析调用节点降级 analysis_id=%s tool=parse_call_node exception=%s",
+                aid, type(e).__name__,
+            )
         return None
 
     def _parse_definition_node(
@@ -436,8 +466,12 @@ class CallGraphExpander:
 
             return MethodReference(class_name=class_name, method_name=method_name, file_path=file_path)
 
-        except Exception:
-            pass
+        except Exception as e:
+            aid = getattr(self, "_current_analysis_id", "") or ""
+            logger.debug(
+                "[CallGraphExpander] 解析定义节点降级 analysis_id=%s tool=parse_definition_node exception=%s",
+                aid, type(e).__name__,
+            )
         return None
 
     def _extract_calls_with_regex(self, code: str, file_path: str) -> list[MethodReference]:
@@ -580,8 +614,9 @@ class CallGraphExpander:
                                 results.append(method_code)
                                 if len(results) >= 2:
                                     break
-            except Exception:
-                pass
+            except Exception as e:
+                self._expand_degradations.add("zoekt_failed")
+                logger.debug("[CallGraphExpander] Zoekt 搜索失败: %s", type(e).__name__)
 
         # 策略3: 限制范围扫描（优先常见目录）
         if not results:
@@ -621,8 +656,10 @@ class CallGraphExpander:
         if not results:
             file_count = 0
             max_scan_files = 200  # 限制扫描文件数
+            scan_truncated = False
             for path in base.rglob("*.java"):
                 if file_count >= max_scan_files:
+                    scan_truncated = True
                     break
                 if str(path.relative_to(base)) in seen_files:
                     continue
@@ -637,10 +674,13 @@ class CallGraphExpander:
                     results.append(method_code)
                     if len(results) >= 2:
                         break
+            if scan_truncated:
+                self._expand_degradations.add("scan_truncated")
             if not results:
                 file_count = 0
                 for path in base.rglob("*.py"):
                     if file_count >= max_scan_files:
+                        scan_truncated = True
                         break
                     if str(path.relative_to(base)) in seen_files:
                         continue
@@ -655,6 +695,8 @@ class CallGraphExpander:
                         results.append(method_code)
                         if len(results) >= 2:
                             break
+            if scan_truncated:
+                self._expand_degradations.add("scan_truncated")
 
         self._update_cache(cache_key, results)
         return results

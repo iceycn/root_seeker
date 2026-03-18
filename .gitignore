@@ -39,3 +39,6 @@ tmp_sls_log.json
 
 # Design docs
 docs/设计与需求.md
+
+# 临时文档（不提交，仅本地参考）
+docs/_temp/

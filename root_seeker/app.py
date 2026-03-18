@@ -64,10 +64,26 @@ from root_seeker.services.vector_indexer import VectorIndexer, VectorIndexConfig
 from root_seeker.services.service_graph import ServiceGraphBuilder, load_graph, save_graph
 from root_seeker.ai.gateway import create_ai_gateway_from_app_config
 from root_seeker.mcp.gateway import McpGateway
-from root_seeker.mcp.tools.code import CodeSearchTool, CodeReadTool
+from root_seeker.mcp.tools.code import CodeReadTool, CodeResolveSymbolTool, CodeSearchTool
+from root_seeker.mcp.tools.cmd import CmdRunBuildAnalysisTool
+from root_seeker.mcp.tools.deps import DepsGraphTool
+from root_seeker.mcp.tools.deps_external import (
+    DepsDiffDeclaredVsResolvedTool,
+    DepsParseExternalTool,
+    DepsScanBinariesTool,
+)
+from root_seeker.mcp.tools.deps_sources import DepsFetchJavaSourcesTool, DepsIndexDependencySourcesTool
+from root_seeker.mcp.tools.lsp import (
+    LspDefinitionTool,
+    LspDocumentSymbolsTool,
+    LspHoverTool,
+    LspReferencesTool,
+    LspStartTool,
+    LspStopTool,
+    LspWorkspaceSymbolTool,
+)
 from root_seeker.mcp.tools.index import IndexStatusTool
 from root_seeker.mcp.tools.correlation import CorrelationInfoTool
-from root_seeker.mcp.tools.deps import DepsGraphTool
 from root_seeker.mcp.tools.analysis import AnalysisRunFullTool, AnalysisRunTool, AnalysisSynthesizeTool
 from root_seeker.mcp.tools.evidence import EvidenceContextSearchTool
 from root_seeker.sql_templates import SqlTemplate, SqlTemplateRegistry
@@ -146,11 +162,16 @@ from root_seeker.indexing.queue import (
 
 def create_app() -> FastAPI:
     cfg = load_config().app
+    from root_seeker.services.dep_cache_config import set_dep_cache_roots
+    set_dep_cache_roots(getattr(cfg, "dep_cache_roots", None) or [])
+
     # 配置日志系统（环境变量 LOG_LEVEL / ROOT_SEEKER_LOG_LEVEL 可覆盖 config）
     log_level = os.environ.get("LOG_LEVEL") or os.environ.get("ROOT_SEEKER_LOG_LEVEL") or cfg.log_level
     setup_logging(log_level)
     app_logger = logging.getLogger(__name__)
-    app_logger.info(f"[App] 应用启动，日志级别={log_level}")
+    from root_seeker.config_reader import _ReaderSettings
+    config_path = _ReaderSettings().config_path.resolve()
+    app_logger.info("[App] 应用启动，日志级别=%s，配置路径=%s，orchestration_mode=%s", log_level, config_path, getattr(cfg, "orchestration_mode", "plan_act"))
     
     app = FastAPI(title="RootSeeker", version="0.1.0")
 
@@ -243,6 +264,7 @@ def create_app() -> FastAPI:
         time_window_seconds=300,
         trace_chain_enabled=cfg.trace_chain_enabled,
         trace_chain_time_window_seconds=cfg.trace_chain_time_window_seconds,
+        log_timezone_offset_hours=getattr(cfg, "log_timezone_offset_hours", 8),
     )
     
     # 初始化 trace_chain_provider：如果配置了阿里云 SLS，使用 AliyunTraceChainProvider；否则使用空实现
@@ -367,6 +389,7 @@ def create_app() -> FastAPI:
             llm_multi_turn_self_refine_review_rounds=cfg.llm_multi_turn_self_refine_review_rounds,
             llm_multi_turn_self_refine_improvement_threshold=cfg.llm_multi_turn_self_refine_improvement_threshold,
             ai_driven_enabled=cfg.ai_driven_enabled,
+            orchestration_mode=getattr(cfg, "orchestration_mode", "plan_act"),
             max_analysis_rounds=cfg.max_analysis_rounds,
             max_evidence_collection_depth=cfg.max_evidence_collection_depth,
             max_evidence_total_chars=cfg.max_evidence_total_chars,
@@ -389,6 +412,7 @@ def create_app() -> FastAPI:
 
     if zoekt:
         mcp_gateway.register_internal_tool(CodeSearchTool(zoekt))
+        mcp_gateway.register_internal_tool(CodeResolveSymbolTool(zoekt, router))
     mcp_gateway.register_internal_tool(CodeReadTool(router))
     mcp_gateway.register_internal_tool(IndexStatusTool(qstore, zoekt, router))
     mcp_gateway.register_internal_tool(CorrelationInfoTool(enricher))
@@ -396,6 +420,19 @@ def create_app() -> FastAPI:
     mcp_gateway.register_internal_tool(
         DepsGraphTool(graph_loader, analyzer._call_graph_expander, router=router)
     )
+    mcp_gateway.register_internal_tool(DepsParseExternalTool(router))
+    mcp_gateway.register_internal_tool(DepsDiffDeclaredVsResolvedTool())
+    mcp_gateway.register_internal_tool(DepsScanBinariesTool(router))
+    mcp_gateway.register_internal_tool(DepsFetchJavaSourcesTool(router))
+    mcp_gateway.register_internal_tool(DepsIndexDependencySourcesTool(router))
+    mcp_gateway.register_internal_tool(CmdRunBuildAnalysisTool(router))
+    mcp_gateway.register_internal_tool(LspStartTool(router))
+    mcp_gateway.register_internal_tool(LspStopTool(router))
+    mcp_gateway.register_internal_tool(LspWorkspaceSymbolTool(router))
+    mcp_gateway.register_internal_tool(LspDefinitionTool(router))
+    mcp_gateway.register_internal_tool(LspReferencesTool(router))
+    mcp_gateway.register_internal_tool(LspHoverTool(router))
+    mcp_gateway.register_internal_tool(LspDocumentSymbolsTool(router))
     mcp_gateway.register_internal_tool(AnalysisRunFullTool(analyzer))
     mcp_gateway.register_internal_tool(AnalysisSynthesizeTool(analyzer))
     mcp_gateway.register_internal_tool(AnalysisRunTool(analyzer))  # 向后兼容

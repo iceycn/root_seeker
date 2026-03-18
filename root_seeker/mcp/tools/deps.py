@@ -83,7 +83,16 @@ class DepsGraphTool(BaseTool):
                 edges.append({"from": target, "to": rel.service_name, "relation": "downstream"})
 
         nodes = [{"id": n, "label": n} for n in nodes_set]
-        return ToolResult.text(json.dumps({"nodes": nodes, "edges": edges}, ensure_ascii=False))
+        out = {"nodes": nodes, "edges": edges}
+        if hasattr(graph, "_scan_meta") and graph._scan_meta:
+            meta = graph._scan_meta
+            if meta.get("risk_flags"):
+                out["risk_flags"] = meta["risk_flags"]
+            if meta.get("read_failures"):
+                out["read_failures"] = meta["read_failures"]
+            if meta.get("scan_truncated_repo"):
+                out["scan_truncated_repo"] = meta["scan_truncated_repo"]
+        return ToolResult.text(json.dumps(out, ensure_ascii=False))
 
     async def _run_scope_method(
         self, target: str, direction: str, depth: int
