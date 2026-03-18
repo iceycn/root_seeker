@@ -144,7 +144,7 @@ Plan（规划）→ Act（执行工具）→ Synthesize（生成报告）→ Che
 | **上下文发现对齐** | 工具错误分级提示、mistake_limit、结构感知截断、相关性保留压缩 |
 | **依赖源码兜底** | `code.resolve_symbol`、`deps.fetch_java_sources`，LSP 不可用时仍可定位依赖库符号 |
 
-详见 [docs/CHANGELOG_v3.0.0.md](docs/CHANGELOG_v3.0.0.md)、[docs/提示词计划_v3.0.0.md](docs/提示词计划_v3.0.0.md)。
+详见 [docs/CHANGELOG_v3.0.0.md](docs/CHANGELOG_v3.0.0.md)。
 
 ---
 

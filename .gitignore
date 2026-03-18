@@ -34,6 +34,9 @@ tmp_sls_log.json
 # VSCode
 .vscode/
 
+# Cursor IDE（不提交）
+.cursor/
+
 # Dify related docs
 *Dify*.md
 
@@ -42,3 +45,6 @@ docs/设计与需求.md
 
 # 临时文档（不提交，仅本地参考）
 docs/_temp/
+
+# 提示词计划（不提交，仅本地参考）
+docs/提示词计划*.md
