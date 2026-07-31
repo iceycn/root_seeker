@@ -1,10 +1,24 @@
 # RootSeeker
 
+> [!IMPORTANT]
+> **本仓库（RootSeeker v1/v3）已进入维护期，新功能请迁移到 RootSeeker V2。**
+>
+> | | |
+> | --- | --- |
+> | **新项目** | [iceycn/root-seeker-v2](https://github.com/iceycn/root-seeker-v2) |
+> | **快速安装（国内）** | `git clone` 后执行 `.\setup-cn.ps1`（Windows）或 `./setup-cn.sh`（Linux/macOS） |
+> | **快速安装（国际）** | `.\setup.ps1` / `./setup.sh` |
+> | **Issue / 需求** | 请到 [root-seeker-v2 Issues](https://github.com/iceycn/root-seeker-v2/issues) 提交 |
+>
+> V2 提供交互式安装向导、Docker/本机双路径、SQLite/MySQL 可选存储、Skill/MCP/Case 回放等能力。本仓库仅保留历史文档与紧急修复参考，**不再作为默认推荐部署路径**。
+
 <p align="center">
+    <img src="https://img.shields.io/badge/status-maintenance-orange.svg" alt="Maintenance">
     <img src="https://img.shields.io/badge/version-3.0.0-blue.svg" alt="Version">
     <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python Version">
     <img src="https://img.shields.io/badge/license-Apache-green.svg" alt="License">
     <img src="https://img.shields.io/badge/docker-ready-blue.svg" alt="Docker">
+    <a href="https://github.com/iceycn/root-seeker-v2"><img src="https://img.shields.io/badge/successor-root--seeker--v2-brightgreen.svg" alt="Successor"></a>
 </p>
 
 <p align="center">
@@ -21,7 +35,25 @@ v3.0.0 支持 **Plan-Act** 与 **tool_use_loop** 双编排模式，通过 **MCP 
 
 > **如果觉得这个项目对你有帮助，请帮忙点个 Star ⭐️，你的支持是我们更新的动力！**
 
-> 📮 **项目快速迭代中**：如果您有任何需求或建议，欢迎通过 [Issue](https://gitee.com/icey_1/root_seeker/issues) 提交，我们会优先考虑您的反馈。也可联系：**wuhun0301@qq.com**
+> 📮 **后续需求与建议**：请到新项目 [root-seeker-v2 Issues](https://github.com/iceycn/root-seeker-v2/issues) 提交。本仓库 Issues 仅处理历史兼容问题。联系：**wuhun0301@qq.com**
+
+---
+
+## ➡️ 迁往 RootSeeker V2
+
+**新用户与新环境请直接使用 V2**，不要在本仓库上继续扩展功能：
+
+```bash
+git clone https://github.com/iceycn/root-seeker-v2.git
+cd root-seeker-v2
+# 国内
+./setup-cn.sh          # Windows: .\setup-cn.ps1
+# 或国际
+./setup.sh             # Windows: .\setup.ps1
+```
+
+仓库地址：[https://github.com/iceycn/root-seeker-v2](https://github.com/iceycn/root-seeker-v2)  
+快速开始与参数说明见 V2 仓库 README「快速开始」章节。
 
 ---
 
@@ -49,6 +81,7 @@ v3.0.0 支持 **Plan-Act** 与 **tool_use_loop** 双编排模式，通过 **MCP 
 
 ## 📚 目录
 
+- [迁往 RootSeeker V2](#-迁往-rootseeker-v2)
 - [项目图例](#-项目图例)
 - [为什么选择 RootSeeker？](#-为什么选择-rootseeker)
 - [核心特性](#-核心特性)
