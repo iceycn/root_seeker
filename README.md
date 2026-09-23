@@ -1,19 +1,21 @@
 # RootSeeker
 
-> [!IMPORTANT]
-> **本仓库（RootSeeker v1/v3）已进入维护期，新功能请迁移到 RootSeeker V2。**
+> [!CAUTION]
+> **本仓库已停更，请使用 RootSeeker V2。**
+>
+> 本仓库（RootSeeker v1/v3）不再更新功能与文档。新安装、Issue、需求与后续开发请全部转到 V2：
 >
 > | | |
 > | --- | --- |
-> | **新项目** | [iceycn/root-seeker-v2](https://github.com/iceycn/root-seeker-v2) |
-> | **快速安装（国内）** | `git clone` 后执行 `.\setup-cn.ps1`（Windows）或 `./setup-cn.sh`（Linux/macOS） |
-> | **快速安装（国际）** | `.\setup.ps1` / `./setup.sh` |
-> | **Issue / 需求** | 请到 [root-seeker-v2 Issues](https://github.com/iceycn/root-seeker-v2/issues) 提交 |
+> | **码云（推荐国内）** | **[icey_1/root-seeker-v2](https://gitee.com/icey_1/root-seeker-v2)** |
+> | **GitHub** | [iceycn/root-seeker-v2](https://github.com/iceycn/root-seeker-v2) |
+> | **快速安装（国内）** | 克隆 V2 后执行 `.\setup-cn.ps1`（Windows）或 `./setup-cn.sh`（Linux/macOS） |
+> | **Issue / 需求** | 请到 [V2 Issues（码云）](https://gitee.com/icey_1/root-seeker-v2/issues) 或 [GitHub Issues](https://github.com/iceycn/root-seeker-v2/issues) 提交 |
 >
-> V2 提供交互式安装向导、Docker/本机双路径、SQLite/MySQL 可选存储、Skill/MCP/Case 回放等能力。本仓库仅保留历史文档与紧急修复参考，**不再作为默认推荐部署路径**。
+> 请不要再基于本仓库部署或提功能。历史代码仅作存档参考。
 
 <p align="center">
-    <img src="https://img.shields.io/badge/status-maintenance-orange.svg" alt="Maintenance">
+    <img src="https://img.shields.io/badge/status-discontinued-lightgrey.svg" alt="Discontinued">
     <img src="https://img.shields.io/badge/version-3.0.0-blue.svg" alt="Version">
     <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python Version">
     <img src="https://img.shields.io/badge/license-Apache-green.svg" alt="License">
@@ -44,15 +46,12 @@ v3.0.0 支持 **Plan-Act** 与 **tool_use_loop** 双编排模式，通过 **MCP 
 **新用户与新环境请直接使用 V2**，不要在本仓库上继续扩展功能：
 
 ```bash
-git clone https://github.com/iceycn/root-seeker-v2.git
+git clone https://gitee.com/icey_1/root-seeker-v2.git
 cd root-seeker-v2
-# 国内
 ./setup-cn.sh          # Windows: .\setup-cn.ps1
-# 或国际
-./setup.sh             # Windows: .\setup.ps1
 ```
 
-仓库地址：[https://github.com/iceycn/root-seeker-v2](https://github.com/iceycn/root-seeker-v2)  
+仓库地址：[https://gitee.com/icey_1/root-seeker-v2](https://gitee.com/icey_1/root-seeker-v2) · [https://github.com/iceycn/root-seeker-v2](https://github.com/iceycn/root-seeker-v2)  
 快速开始与参数说明见 V2 仓库 README「快速开始」章节。
 
 ---

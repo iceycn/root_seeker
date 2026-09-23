@@ -1,19 +1,21 @@
 # RootSeeker
 
-> [!IMPORTANT]
-> **This repository (RootSeeker v1/v3) is in maintenance mode. Please migrate to RootSeeker V2 for new work.**
+> [!CAUTION]
+> **This repository is discontinued. Please use RootSeeker V2.**
+>
+> RootSeeker v1/v3 is no longer maintained. New installs, issues, and development belong in V2:
 >
 > | | |
 > | --- | --- |
-> | **New project** | [iceycn/root-seeker-v2](https://github.com/iceycn/root-seeker-v2) |
-> | **Quick install (China)** | After `git clone`, run `.\setup-cn.ps1` (Windows) or `./setup-cn.sh` (Linux/macOS) |
-> | **Quick install (global)** | `.\setup.ps1` / `./setup.sh` |
-> | **Issues / requests** | Please use [root-seeker-v2 Issues](https://github.com/iceycn/root-seeker-v2/issues) |
+> | **Gitee (China)** | **[icey_1/root-seeker-v2](https://gitee.com/icey_1/root-seeker-v2)** |
+> | **GitHub** | [iceycn/root-seeker-v2](https://github.com/iceycn/root-seeker-v2) |
+> | **Quick install (China)** | Clone V2, then `.\setup-cn.ps1` (Windows) or `./setup-cn.sh` (Linux/macOS) |
+> | **Issues / requests** | [V2 Gitee Issues](https://gitee.com/icey_1/root-seeker-v2/issues) or [GitHub Issues](https://github.com/iceycn/root-seeker-v2/issues) |
 >
-> V2 ships an interactive setup wizard, Docker/native install paths, SQLite/MySQL storage options, and Skill/MCP/Case replay. This repo remains for historical docs and critical fixes only — **it is no longer the recommended default deployment**.
+> Do not deploy or add features on this repo. Historical code is kept for archive only.
 
 <p align="center">
-    <img src="https://img.shields.io/badge/status-maintenance-orange.svg" alt="Maintenance">
+    <img src="https://img.shields.io/badge/status-discontinued-lightgrey.svg" alt="Discontinued">
     <img src="https://img.shields.io/badge/version-3.0.0-blue.svg" alt="Version">
     <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python Version">
     <img src="https://img.shields.io/badge/license-Apache-green.svg" alt="License">
@@ -44,15 +46,12 @@ v3.0.0 supports dual orchestration modes—**Plan-Act** and **tool_use_loop**—
 **New users and new environments should use V2** — do not extend features on this repository:
 
 ```bash
-git clone https://github.com/iceycn/root-seeker-v2.git
+git clone https://gitee.com/icey_1/root-seeker-v2.git
 cd root-seeker-v2
-# China
 ./setup-cn.sh          # Windows: .\setup-cn.ps1
-# or global
-./setup.sh             # Windows: .\setup.ps1
 ```
 
-Repo: [https://github.com/iceycn/root-seeker-v2](https://github.com/iceycn/root-seeker-v2)  
+Repo: [https://gitee.com/icey_1/root-seeker-v2](https://gitee.com/icey_1/root-seeker-v2) · [https://github.com/iceycn/root-seeker-v2](https://github.com/iceycn/root-seeker-v2)  
 See the V2 README “Quick Start” section for flags and details.
 
 ---
